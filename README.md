@@ -149,3 +149,6 @@ The runtime service account needs `roles/aiplatform.user` and `roles/datastore.u
 - **Human review before playbooks publish.** A team owner approves, edits or rejects a distilled playbook
   (draft → published), with an audit trail.
 - Per-team access control on playbooks; feedback signals (did the playbook help?) to rank and retire playbooks.
+- **Secrets in Secret Manager.** V1 passes `ORGMIND_ADMIN_TOKEN` as a plain Cloud Run env var, which anyone with
+  `run.services.get` can read. V2 mounts it from Secret Manager (`--set-secrets`), with `secretAccessor` granted only
+  to the runtime service account.
