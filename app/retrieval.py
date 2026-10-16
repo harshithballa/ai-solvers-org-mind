@@ -2,6 +2,7 @@ from app.config import get_settings
 from app.llm import cosine, get_llm
 from app.models import Playbook
 from app.store import get_store
+from app.tracing import set_attrs, span
 
 
 def score_playbooks(org_id: str, agent_kind: str, query: str) -> list[tuple[Playbook, float]]:
@@ -16,8 +17,13 @@ def score_playbooks(org_id: str, agent_kind: str, query: str) -> list[tuple[Play
 def retrieve_playbooks(org_id: str, agent_kind: str, query: str) -> list[tuple[Playbook, float]]:
     """Top-k playbooks whose similarity clears the retrieval threshold."""
     s = get_settings()
-    scored = score_playbooks(org_id, agent_kind, query)
-    return [(p, sc) for p, sc in scored[: s.retrieval_top_k] if sc >= s.retrieval_threshold]
+    with span("orgmind.retrieval", **{"orgmind.agent_kind": agent_kind, "orgmind.threshold": s.retrieval_threshold}) as sp:
+        scored = score_playbooks(org_id, agent_kind, query)
+        hits = [(p, sc) for p, sc in scored[: s.retrieval_top_k] if sc >= s.retrieval_threshold]
+        set_attrs(sp, **{"orgmind.playbooks_scored": len(scored),
+                         "orgmind.top_score": round(scored[0][1], 3) if scored else None,
+                         "orgmind.retrieved_ids": ",".join(p.id for p, _ in hits) or None})
+        return hits
 
 
 def playbook_doc_text(pb: Playbook) -> str:

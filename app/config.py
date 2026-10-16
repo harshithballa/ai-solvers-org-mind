@@ -17,6 +17,8 @@ class Settings:
     retrieval_threshold: float
     retrieval_top_k: int
     admin_token: str
+    tracing: str
+    trace_cap: int
     org_id: str = "acme"
 
 
@@ -36,4 +38,6 @@ def get_settings() -> Settings:
         retrieval_threshold=float(os.getenv("ORGMIND_RETRIEVAL_THRESHOLD", "0.62")),
         retrieval_top_k=int(os.getenv("ORGMIND_RETRIEVAL_TOP_K", "3")),
         admin_token=os.getenv("ORGMIND_ADMIN_TOKEN", ""),
+        tracing=os.getenv("ORGMIND_TRACING", "off"),
+        trace_cap=int(os.getenv("ORGMIND_TRACE_CAP", "500")),
     )

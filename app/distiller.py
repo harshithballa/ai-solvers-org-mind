@@ -16,6 +16,7 @@ from app.models import Playbook, PlaybookOut, Session, SessionSummary, SummaryOu
 from app.prompts import COMPILE_SYSTEM, LEAK_RETRY, SUMMARIZE_SYSTEM, format_transcript
 from app.retrieval import playbook_doc_text
 from app.store import get_store
+from app.tracing import span, wrap
 
 MIN_EMPLOYEES = 2
 
@@ -169,8 +170,8 @@ def distill(org_id: str, agent_kind: str | None = None) -> DistillReport:
     sessions = [x for x in store.list(Session, org_id=org_id) if agent_kind in (None, x.agent_kind)]
 
     stale = [x for x in sessions if _needs_summary(x) and len(store.list_messages(x.id)) >= 2]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        summarized = {x.id: x for x in pool.map(summarize_session, stale)}
+    with span("distill.summarize", **{"orgmind.sessions": len(stale)}), ThreadPoolExecutor(max_workers=8) as pool:
+        summarized = {x.id: x for x in pool.map(wrap(summarize_session), stale)}
     sessions = [summarized.get(x.id, x) for x in sessions if x.summary or x.id in summarized]
 
     t_summarize = time.perf_counter() - t0
@@ -206,8 +207,8 @@ def distill(org_id: str, agent_kind: str | None = None) -> DistillReport:
 
     todo = [j for j in jobs.values() if j.existing is None or _has_new_evidence(j)]
     t1 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        built = list(pool.map(lambda j: _build_playbook(org_id, j), todo))
+    with span("distill.compile", **{"orgmind.playbooks": len(todo)}), ThreadPoolExecutor(max_workers=8) as pool:
+        built = list(pool.map(wrap(lambda j: _build_playbook(org_id, j)), todo))
     for job, pb in zip(todo, built):
         store.put(pb)
         for rep in job.reports:

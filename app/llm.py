@@ -12,6 +12,7 @@ from typing import Callable, Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.tracing import llm_call
 
 T = TypeVar("T", bound=BaseModel)
 Turn = tuple[Literal["user", "model"], str]
@@ -38,6 +39,24 @@ def cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))  # vectors are stored normalized
 
 
+OPERATIONS = {"AnswerOut": "answer", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
+
+
+def _operation(schema) -> str:
+    return OPERATIONS.get(schema.__name__, f"generate:{schema.__name__}")
+
+
+def _prompt_text(system, contents) -> str:
+    body = contents if isinstance(contents, str) else "\n".join(f"{r}: {t}" for r, t in contents)
+    return f"[system] {system[:200]}\n{body}"
+
+
+def _note_output(info: dict, out) -> None:
+    info["response"] = out.model_dump_json()
+    if hasattr(out, "used_playbook_ids"):
+        info["playbook_ids"] = list(out.used_playbook_ids)
+
+
 def _retry(fn, attempts: int = 4):
     for i in range(attempts):
         try:
@@ -62,6 +81,7 @@ class VertexLLM:
     def generate_json(self, system, contents, schema, fake, think=False):
         from google.genai import types
 
+        raw = contents
         if isinstance(contents, list):
             contents = [types.Content(role=r, parts=[types.Part(text=t)]) for r, t in contents]
         config = types.GenerateContentConfig(
@@ -71,11 +91,16 @@ class VertexLLM:
             temperature=0.0,
             thinking_config=types.ThinkingConfig(thinking_budget=1024 if think else 0),
         )
-        resp = _retry(lambda: self._client.models.generate_content(
-            model=self._s.chat_model, contents=contents, config=config))
-        if isinstance(resp.parsed, schema):
-            return resp.parsed
-        return schema.model_validate_json(resp.text)
+        with llm_call(_operation(schema), self._s.chat_model, _prompt_text(system, raw)) as info:
+            resp = _retry(lambda: self._client.models.generate_content(
+                model=self._s.chat_model, contents=contents, config=config))
+            usage = getattr(resp, "usage_metadata", None)
+            if usage is not None:
+                info["input_tokens"] = usage.prompt_token_count
+                info["output_tokens"] = (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0)
+            out = resp.parsed if isinstance(resp.parsed, schema) else schema.model_validate_json(resp.text)
+            _note_output(info, out)
+            return out
 
     def embed(self, texts, task_type):
         from google.genai import types
@@ -83,9 +108,11 @@ class VertexLLM:
         config = types.EmbedContentConfig(task_type=task_type, output_dimensionality=self._s.embed_dim)
         out = []
         for t in texts:  # gemini-embedding-001 on Vertex accepts one input per request
-            resp = _retry(lambda: self._client.models.embed_content(
-                model=self._s.embed_model, contents=t, config=config))
-            out.append(normalize(list(resp.embeddings[0].values)))
+            with llm_call(f"embed:{task_type.lower()}", self._s.embed_model, t) as info:
+                resp = _retry(lambda: self._client.models.embed_content(
+                    model=self._s.embed_model, contents=t, config=config))
+                out.append(normalize(list(resp.embeddings[0].values)))
+                info["response"] = f"{len(out[-1])}-dim vector"
         return out
 
 
@@ -101,10 +128,18 @@ class FakeLLM:
     dim = 512
 
     def generate_json(self, system, contents, schema, fake, think=False):
-        return fake()
+        with llm_call(_operation(schema), "fake", _prompt_text(system, contents)) as info:
+            out = fake()
+            _note_output(info, out)
+            return out
 
     def embed(self, texts, task_type):
-        return [self._embed_one(t) for t in texts]
+        out = []
+        for t in texts:
+            with llm_call(f"embed:{task_type.lower()}", "fake", t) as info:
+                out.append(self._embed_one(t))
+                info["response"] = f"{len(out[-1])}-dim vector"
+        return out
 
     def _embed_one(self, text: str) -> list[float]:
         v = [0.0] * self.dim

@@ -29,6 +29,11 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Hash routes `#/user/<tab>` and `#/admin/<tab>`; default landing `#/admin/knowledge` (Compare). Vanilla HTML/JS/CSS, no build step.
 - Preview tabs (`static/previews.js`) must show the "Preview · planned" badge, keep every control disabled with a "Planned for …" tooltip, label sample rows "Sample", and make no network calls. Never show invented metrics.
 
+## Observability
+- `app/tracing.py`: `ORGMIND_TRACING=cloudtrace|off` (off locally and always off in tests). Spans go via OTLP/gRPC to `telemetry.googleapis.com` (the deprecated `CloudTraceSpanExporter` silently dropped spans).
+- One root span per chat/distill/compare request (middleware); child spans for retrieval, every Gemini call (`llm.py` → `tracing.llm_call`) and Firestore writes. Worker threads must use `tracing.wrap(fn)` to keep the request context.
+- Every LLM call is also recorded (capped `llm_calls`, separate from demo data) for `GET /api/traces`; JSON logs on Cloud Run carry `logging.googleapis.com/trace`. Recording/export must never raise into request code; flush happens before the response returns.
+
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
 - PII redaction is out of scope for V1 (planned for the next version).

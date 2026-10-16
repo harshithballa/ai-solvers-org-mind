@@ -1,9 +1,12 @@
 import hmac
+import re
+import time
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -14,18 +17,42 @@ from app.llm import get_llm
 from app.models import Agent, Employee, Message, Org, Playbook, Session, now
 from app.seed import ORG_ID, seed
 from app.store import get_store
+from app import tracing
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    tracing.init()
     if get_store().is_empty():
         seed(get_store())
     yield
 
 
 app = FastAPI(title="OrgMind", lifespan=lifespan)
+
+# One trace per chat / distill / compare request.
+TRACED = [("POST", re.compile(r"^/api/sessions/[^/]+/messages$"), "chat"),
+          ("POST", re.compile(r"^/api/distill$"), "distill"),
+          ("POST", re.compile(r"^/api/compare$"), "compare")]
+
+
+@app.middleware("http")
+async def trace_requests(request: Request, call_next):
+    kind = next((k for m, rx, k in TRACED if request.method == m and rx.match(request.url.path)), None)
+    if kind is None:
+        return await call_next(request)
+    t0 = time.perf_counter()
+    status = 500
+    with tracing.request_scope(kind, {k.lower(): v for k, v in request.headers.items()}) as rt:
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            # Flush before the response goes out: Cloud Run throttles CPU after that.
+            await run_in_threadpool(tracing.finish, rt, status, (time.perf_counter() - t0) * 1000)
 
 
 def _get_or_404(cls, id: str):
@@ -49,7 +76,8 @@ def _result_payload(r: AnswerResult) -> dict:
 def health():
     s = get_settings()
     return {"ok": True, "store": s.store, "llm": get_llm().mode, "chat_model": s.chat_model,
-            "cluster_threshold": s.cluster_threshold, "retrieval_threshold": s.retrieval_threshold}
+            "cluster_threshold": s.cluster_threshold, "retrieval_threshold": s.retrieval_threshold,
+            "tracing": s.tracing, "project": s.project or None}
 
 
 @app.get("/api/org")
@@ -173,10 +201,17 @@ class CompareRequest(BaseModel):
 def compare(body: CompareRequest):
     agent = _get_or_404(Agent, body.agent_id)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        base = pool.submit(answer, agent, [], body.question, False)
-        withpb = pool.submit(answer, agent, [], body.question, True)
+        base = pool.submit(tracing.wrap(answer), agent, [], body.question, False)
+        withpb = pool.submit(tracing.wrap(answer), agent, [], body.question, True)
         return {"question": body.question, "baseline": _result_payload(base.result()),
                 "with_playbooks": _result_payload(withpb.result())}
+
+
+@app.get("/api/traces")
+def list_traces(limit: int = Query(50, ge=1, le=200)):
+    s = get_settings()
+    return {"tracing": s.tracing, "project": s.project or None,
+            "calls": [c.model_dump(mode="json") for c in get_store().list_llm_calls(limit)]}
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
