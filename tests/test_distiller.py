@@ -51,6 +51,14 @@ def test_single_employee_repeats_are_excluded(fresh_store):
     assert docker.outcome == "skipped"
 
 
+def test_recurring_but_never_resolved_problem_is_skipped(fresh_store):
+    report = distill(ORG_ID, "dev")
+    kafka = next(c for c in report.clusters if "ses_seed_12" in c.session_ids)
+    assert set(kafka.session_ids) == {"ses_seed_12", "ses_seed_13"}
+    assert kafka.resolved_session_ids == []
+    assert kafka.outcome == "skipped"
+
+
 def test_rerun_is_unchanged_then_new_evidence_updates(fresh_store):
     distill(ORG_ID)
     again = distill(ORG_ID)
@@ -68,3 +76,31 @@ def test_rerun_is_unchanged_then_new_evidence_updates(fresh_store):
     [dev] = _playbooks(fresh_store, "dev")
     assert dev.version == 2
     assert sid in dev.source_session_ids
+
+
+def test_compile_enforces_excluded_specifics(fresh_store, monkeypatch):
+    from app import distiller
+    from app.models import PlaybookOut
+
+    leaky = PlaybookOut(org_wide_facts=["Remote Work Stipend limit is $500 per year"],
+                        excluded_specifics=["ENG-200", "$640", "$500"], title="Fix stipend",
+                        trigger="claim of $640 rejected", symptoms=["Missing cost center"],
+                        steps=["Set cost center ENG-200 in AcmePeople > Profile > Job Info", "Limit is $500 per year"])
+
+    class StubLLM:
+        mode = "stub"
+        calls = 0
+
+        def generate_json(self, system, contents, schema, fake, think=False):
+            StubLLM.calls += 1
+            return leaky.model_copy(deep=True)
+
+    monkeypatch.setattr(distiller, "get_llm", lambda: StubLLM())
+    sources = [fresh_store.get(Session, "ses_seed_08")]
+    sources[0].summary = distiller.SessionSummary(problem="p", context="", resolution="r", resolved=True)
+    out = distiller.compile_playbook(sources)
+    assert StubLLM.calls == 2  # one recompile attempt
+    text = " ".join([out.title, out.trigger, *out.symptoms, *out.steps])
+    assert "ENG-200" not in text and "$640" not in text
+    assert "AcmePeople > Profile > Job Info" in text
+    assert "$500" in text  # org-wide fact survives even though it was also flagged

@@ -68,8 +68,8 @@ class VertexLLM:
             system_instruction=system,
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.2,
-            thinking_config=None if think else types.ThinkingConfig(thinking_budget=0),
+            temperature=0.0,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024 if think else 0),
         )
         resp = _retry(lambda: self._client.models.generate_content(
             model=self._s.chat_model, contents=contents, config=config))

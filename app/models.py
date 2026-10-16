@@ -102,7 +102,9 @@ class SummaryOut(BaseModel):
 
 
 class PlaybookOut(BaseModel):
-    title: str = Field(description="Short imperative title, e.g. 'Fix expired ACME_VAULT_TOKEN on staging deploy'.")
+    org_wide_facts: list[str] = Field(description="Fill this FIRST: facts that apply to every employee and must be kept: tool/command names, portal menu paths, categories, channels, groups, policy limits, deadlines and expiry periods (e.g. 'stipend limit $500 per year', 'receipts within 60 days').")
+    excluded_specifics: list[str] = Field(description="Values that belong to one person or one case and must NOT appear in the playbook: names, cost center codes, IDs, tokens, the amount one person paid, dates, the item one person bought. A policy limit is an org-wide fact even if someone's claim amount equals it.")
+    title: str = Field(description="Short imperative title naming the topic and the error, e.g. 'Fix expired ACME_VAULT_TOKEN on staging deploy'.")
     trigger: str = Field(description="When this playbook applies: the situation and the error/symptom that signals it.")
     symptoms: list[str] = Field(description="Observable symptoms or exact error messages.")
     steps: list[str] = Field(description="Ordered, concrete resolution steps with exact commands/settings/links.")

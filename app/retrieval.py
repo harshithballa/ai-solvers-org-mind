@@ -21,4 +21,4 @@ def retrieve_playbooks(org_id: str, agent_kind: str, query: str) -> list[tuple[P
 
 
 def playbook_doc_text(pb: Playbook) -> str:
-    return f"{pb.title}\n{pb.trigger}\n" + "\n".join(pb.symptoms)
+    return f"{pb.title}\n{pb.trigger}\n" + "\n".join(pb.symptoms) + "\n" + "\n".join(pb.steps)

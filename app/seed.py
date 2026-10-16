@@ -108,6 +108,19 @@ SESSIONS: list[tuple[str, str, int, list[str]]] = [
         "Found it in the handbook: up to 5 days carry over and must be used by March 31. Thanks, resolved.",
         "Thanks for sharing!",
     ]),
+    # ---- Dev: recurring but nobody resolved it (must NOT become a playbook) ----
+    ("e_priya", "a_dev", 5, [
+        "The `orders-consumer` service on staging shows Kafka consumer lag climbing past 50k on the `acme-events` topic. Restarting doesn't help.",
+        "Consumer lag usually means consumers can't keep up. Check partition count vs consumer instances and look for slow message handlers.",
+        "Partitions and instances match, handlers look fine. Still lagging, I'll escalate later.",
+        "Sorry I couldn't pin it down. Escalating to the platform team is a good next step.",
+    ]),
+    ("e_tom", "a_dev", 2, [
+        "Kafka consumer lag on `acme-events` in staging keeps growing for `orders-consumer`, now over 80k.",
+        "Try scaling the consumer group or checking for rebalancing storms in the logs.",
+        "Scaled to 6 replicas, lag still grows. Didn't fix it, no idea what's wrong.",
+        "Sorry, I don't have more Acme-specific guidance for this.",
+    ]),
 ]
 
 
