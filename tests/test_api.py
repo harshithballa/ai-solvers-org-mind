@@ -30,3 +30,15 @@ def test_compare_side_by_side():
     res = client.post("/api/compare", json={"agent_id": "a_dev", "question": QUESTION}).json()
     assert res["baseline"]["cited"] == []
     assert len(res["with_playbooks"]["cited"]) == 1
+
+
+def test_reset_disabled_when_token_unset(monkeypatch):
+    import dataclasses
+
+    from app import main
+    from app.config import get_settings
+
+    monkeypatch.setattr(main, "get_settings", lambda: dataclasses.replace(get_settings(), admin_token=""))
+    assert client.post("/api/demo/reset").status_code == 403
+    assert client.post("/api/demo/reset", headers={"X-Admin-Token": ""}).status_code == 403
+    assert client.post("/api/demo/reset", headers={"X-Admin-Token": "test-token"}).status_code == 403

@@ -66,10 +66,10 @@ class MemoryStore:
 
 
 class FirestoreStore:
-    def __init__(self, project: str):
+    def __init__(self, project: str, database: str = "(default)"):
         from google.cloud import firestore
 
-        self._db = firestore.Client(project=project or None)
+        self._db = firestore.Client(project=project or None, database=database)
 
     def put(self, obj: BaseModel) -> None:
         self._db.collection(COLLECTIONS[type(obj)]).document(obj.id).set(obj.model_dump(mode="json"))
@@ -98,11 +98,7 @@ class FirestoreStore:
 
     def reset(self) -> None:
         for name in COLLECTIONS.values():
-            for snap in self._db.collection(name).stream():
-                if name == "sessions":
-                    for m in snap.reference.collection("messages").stream():
-                        m.reference.delete()
-                snap.reference.delete()
+            self._db.recursive_delete(self._db.collection(name))  # includes sessions/*/messages
 
     def is_empty(self) -> bool:
         return not list(self._db.collection("orgs").limit(1).stream())
@@ -115,5 +111,5 @@ def get_store() -> Store:
     global _store
     if _store is None:
         s = get_settings()
-        _store = FirestoreStore(s.project) if s.store == "firestore" else MemoryStore()
+        _store = FirestoreStore(s.project, s.firestore_database) if s.store == "firestore" else MemoryStore()
     return _store

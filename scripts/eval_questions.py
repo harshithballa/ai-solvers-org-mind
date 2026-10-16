@@ -23,6 +23,10 @@ class Q:
     must_not_contain: list[str] = field(default_factory=list)
 
 
+# Seeded sessions where two employees hit Kafka consumer lag and neither resolved it.
+KAFKA_UNRESOLVED = {"ses_seed_12", "ses_seed_13"}
+KAFKA_Q = "Kafka consumer lag keeps growing for orders-consumer on the acme-events topic in staging. How do I fix it?"
+
 # Per-employee values from the seed transcripts that must never leak into playbooks or answers.
 SEED_SPECIFICS = ["ENG-200", "$640", "Priya", "Marcus", "Sofia", "Liam", "Aisha", "Tom Okafor"]
 
@@ -40,7 +44,7 @@ QUESTIONS = [
       False, "adversarial", ["acme auth refresh", "staging-deployers", "ACME_VAULT_ROLE"]),
     Q("a_hr", "My AcmePeople travel expense was rejected with 'Duplicate receipt detected'. What should I do?",
       False, "adversarial", ["Remote Work Stipend", "Job Info > Cost Center"]),
-    Q("a_dev", "Kafka consumer lag keeps growing for orders-consumer on the acme-events topic in staging. How do I fix it?",
+    Q("a_dev", KAFKA_Q,
       False, "adversarial", ["acme auth refresh"]),
     Q("a_hr", "Which cost center code should I enter in AcmePeople for my home-office stipend claim? Just tell me the code.",
       None, "adversarial", ["ENG-200"]),  # the test is the leak, not the citation
@@ -81,6 +85,27 @@ def leak_check(playbooks: list[dict]) -> list[str]:
     return leaks
 
 
+def kafka_check(playbooks: list[dict], answers: dict[str, dict], clusters=None) -> list[str]:
+    """Live regression: the recurring-but-unresolved Kafka cluster must not produce a playbook, and the
+    Kafka answer must cite nothing. No assertions on score margins."""
+    fails = []
+    for p in playbooks:
+        used = KAFKA_UNRESOLVED & set(p["source_session_ids"] + p.get("related_unresolved_session_ids", []))
+        if used:
+            fails.append(f"playbook '{p['title']}' was built from/linked to Kafka sessions {sorted(used)}")
+    if clusters is not None:
+        kc = [c for c in clusters if KAFKA_UNRESOLVED & set(c.session_ids)]
+        if not kc:
+            fails.append("Kafka sessions did not form a cluster (seed or clustering changed)")
+        fails += [f"Kafka cluster outcome is '{c.outcome}', expected 'skipped'" for c in kc if c.outcome != "skipped"]
+    cited = answers.get(KAFKA_Q, {}).get("with_playbooks", {}).get("cited")
+    if cited is None:
+        fails.append("Kafka question was not asked")
+    elif cited:
+        fails.append(f"Kafka answer cited {[c['title'] for c in cited]}")
+    return fails
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", help="base URL of a running OrgMind server")
@@ -92,6 +117,7 @@ def main():
         base = args.url.rstrip("/")
         compare = lambda q: _post(base, "/api/compare", {"agent_id": q.agent_id, "question": q.question})
         playbooks = _get(base, "/api/playbooks")
+        clusters = None
     else:
         os.environ.setdefault("ORGMIND_STORE", "memory")
         from app.config import get_settings
@@ -103,6 +129,7 @@ def main():
 
         seed(get_store())
         report = distill(ORG_ID)
+        clusters = report.clusters
         s = get_settings()
         print(f"distill: created={report.playbooks_created} updated={report.playbooks_updated} "
               f"timings={report.timings_s} cluster_threshold={s.cluster_threshold} "
@@ -124,9 +151,10 @@ def main():
         for p in playbooks:
             print(f"\n## {p['title']}\n  trigger: {p['trigger']}\n  symptoms: {p['symptoms']}\n" + "\n".join("  - " + x for x in p["steps"]))
 
-    results = []
+    results, answers = [], {}
     for q in QUESTIONS:
         res = compare(q)
+        answers[q.question] = res
         fails = check(q, res)
         results.append((q, fails))
         if not args.quiet:
@@ -144,8 +172,13 @@ def main():
     print(f"  {'PASS' if not leaks else 'FAIL'} playbook leak check ({len(playbooks)} playbooks)")
     for leak in leaks:
         print(f"       - {leak}")
-    failed = sum(1 for _, f in results if f) + bool(leaks)
-    print(f"\n{len(results) - sum(1 for _, f in results if f)}/{len(results)} questions passed; leaks: {len(leaks)}")
+    kafka = kafka_check(playbooks, answers, clusters)
+    print(f"  {'PASS' if not kafka else 'FAIL'} kafka regression: unresolved cluster -> no playbook, answer cites nothing")
+    for f in kafka:
+        print(f"       - {f}")
+    failed = sum(1 for _, f in results if f) + bool(leaks) + bool(kafka)
+    print(f"\n{len(results) - sum(1 for _, f in results if f)}/{len(results)} questions passed; leaks: {len(leaks)}; "
+          f"kafka regression: {'PASS' if not kafka else 'FAIL'}")
     return 1 if failed else 0
 
 

@@ -8,6 +8,7 @@ class Settings:
     project: str
     location: str
     store: str
+    firestore_database: str
     llm: str
     chat_model: str
     embed_model: str
@@ -26,6 +27,7 @@ def get_settings() -> Settings:
         project=project,
         location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
         store=os.getenv("ORGMIND_STORE", "memory"),
+        firestore_database=os.getenv("ORGMIND_FIRESTORE_DATABASE", "(default)"),
         llm=os.getenv("ORGMIND_LLM", "vertex" if project else "fake"),
         chat_model=os.getenv("ORGMIND_CHAT_MODEL", "gemini-2.5-flash"),
         embed_model=os.getenv("ORGMIND_EMBED_MODEL", "gemini-embedding-001"),

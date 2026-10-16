@@ -33,5 +33,7 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Python 3.12+, Pydantic v2. `app/models.py` is the single source of truth for data shapes.
 - Every LLM call that returns data uses Gemini structured output (`response_mime_type="application/json"` + `response_schema`). Don't parse free text with regexes.
 - Prompts live in `app/prompts.py`.
-- Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store).
+- Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store). Dev deps: `requirements-dev.txt`; the image installs only `requirements.txt`.
+- Must stay green: `pytest`; `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
+- Firestore database is `ORGMIND_FIRESTORE_DATABASE` (default `(default)` = demo). Seeding happens on startup only when the store is empty.
 - Deploy: `gcloud run deploy orgmind --source . --region $GOOGLE_CLOUD_LOCATION`.

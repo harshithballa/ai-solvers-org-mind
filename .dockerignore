@@ -1,0 +1,22 @@
+# Keep the build context minimal: secrets, local state and dev files never reach the image.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*credentials*.json
+service-account*.json
+application_default_credentials.json
+*.log
+*.tmp
+.idea
+.vscode
+tests
+scripts
