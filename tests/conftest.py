@@ -6,6 +6,7 @@ os.environ.update({
     "ORGMIND_CLUSTER_THRESHOLD": "0.35",
     "ORGMIND_RETRIEVAL_THRESHOLD": "0.2",
     "ORGMIND_ADMIN_TOKEN": "test-token",
+    "ORGMIND_TRACING": "off",  # never export spans from unit tests
 })
 
 import pytest  # noqa: E402

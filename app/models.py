@@ -92,6 +92,24 @@ class Playbook(BaseModel):
     centroid: list[float] = []           # mean of source summary embeddings, for cluster matching
 
 
+class LLMCall(BaseModel):
+    """One recorded Gemini call (in-app trace view). Capped collection, not part of demo data."""
+    id: str
+    ts: datetime
+    request: str                      # chat | distill | compare | other
+    trace_id: str = ""
+    span_id: str = ""
+    operation: str                    # answer | summarize | compile_playbook | embed:<task>
+    model: str
+    latency_ms: float
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    playbook_ids: list[str] = []
+    error: str | None = None
+    prompt_excerpt: str = ""
+    response_excerpt: str = ""
+
+
 # ---- Gemini structured-output schemas (no defaults: keep schemas plain) ----
 
 class SummaryOut(BaseModel):

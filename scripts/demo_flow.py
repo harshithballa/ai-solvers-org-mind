@@ -37,7 +37,8 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text} @ {m.location.get('url')}") if m.type == "error" and "401" not in m.text else None)
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     page.goto(BASE); page.wait_for_selector("#compare-presets .chip", timeout=120000)
-    step("load", True, f"badge={page.text_content('#mode-badge')!r}")
+    step("load: lands on Admin > Knowledge (compare)", page.url.endswith("#/admin/knowledge")
+         and page.is_visible("#page-admin-knowledge"), f"url={page.url} badge={page.text_content('#mode-badge')!r}")
 
     # 0. reset: wrong token rejected, right token resets to seeded state
     page.click("#reset-btn"); page.fill("#token-input", "wrong"); page.click("#token-confirm")
@@ -86,7 +87,7 @@ with sync_playwright() as p:
          page.text_content("#playbook-citations")[:120])
 
     # 6. chat as Dana with Dev agent
-    page.click(".tab[data-view=chat]")
+    page.click(".mode-switch a[data-mode=user]"); page.wait_for_selector("#page-user-chat:not([hidden])")
     step("chat defaults to Dana", page.input_value("#employee-select") == "e_dana")
     page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
     page.fill("#message-input", "Hi, I'm new. acme deploy staging fails with ACME_VAULT_TOKEN expired, what do I do?")
@@ -118,8 +119,25 @@ with sync_playwright() as p:
     page.wait_for_selector(".msg.user")
     step("seeded session opens", page.locator(".msg").count() >= 4)
 
+    # 9. traces: Admin > Traces shows the requests made above; drawer reachable from the User page
+    page.click("#trace-btn"); page.wait_for_selector("#trace-drawer:not([hidden]) .trace-group", timeout=60000)
+    step("trace drawer opens from User page with calls", page.locator("#drawer-body .trace-group").count() > 0)
+    page.keyboard.press("Escape")
+    page.evaluate("location.hash = '#/admin/traces'")
+    page.wait_for_selector("#traces-view .trace-group", timeout=60000)
+    heads = " ".join(page.locator("#traces-view .trace-head").all_text_contents())
+    rows = page.locator("#traces-view tbody tr").count()
+    step("traces tab lists chat, compare and distill requests", all(k in heads for k in ("chat", "compare", "distill")),
+         f"groups={page.locator('#traces-view .trace-group').count()} calls={rows}")
+    health = page.evaluate("fetch('/api/health').then(r => r.json())")
+    if health.get("tracing") == "cloudtrace":
+        n_links = page.locator("#traces-view .trace-head a[href*='console.cloud.google.com/traces']").count()
+        step("Cloud Trace links per request", n_links > 0 and page.is_visible("#cloud-trace-link"), f"links={n_links}")
+    page.screenshot(path=f"{SHOTS}/8_traces.png", full_page=True)
+
     # 10. narrow viewport sanity
-    page.set_viewport_size({"width": 420, "height": 900}); page.click(".tab[data-view=compare]")
+    page.set_viewport_size({"width": 400, "height": 900}); page.click(".mode-switch a[data-mode=admin]")
+    page.wait_for_selector("#page-admin-knowledge:not([hidden])")
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     step("mobile width: no horizontal overflow", overflow <= 0, f"overflow={overflow}px")
     page.screenshot(path=f"{SHOTS}/7_mobile.png", full_page=True)

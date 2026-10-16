@@ -25,6 +25,15 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Playbooks must generalize: the writer classifies `org_wide_facts` (kept: commands, menu paths, policy limits, deadlines) vs `excluded_specifics` (one person's names, cost centers, amounts). A leaked specific triggers one recompile, then a placeholder replacement; org-wide facts are never scrubbed.
 - Thresholds: `ORGMIND_CLUSTER_THRESHOLD` (0.88) and `ORGMIND_RETRIEVAL_THRESHOLD` (0.62). Gemini embeddings put unrelated support chats at ~0.8, so clustering is complete-linkage. Tune with `scripts/eval_questions.py` against real Gemini (fake mode fails it by design).
 
+## UI
+- Hash routes `#/user/<tab>` and `#/admin/<tab>`; default landing `#/admin/knowledge` (Compare). Vanilla HTML/JS/CSS, no build step.
+- Preview tabs (`static/previews.js`) must show the "Preview · planned" badge, keep every control disabled with a "Planned for …" tooltip, label sample rows "Sample", and make no network calls. Never show invented metrics.
+
+## Observability
+- `app/tracing.py`: `ORGMIND_TRACING=cloudtrace|off` (off locally and always off in tests). Spans go via OTLP/gRPC to `telemetry.googleapis.com` (the deprecated `CloudTraceSpanExporter` silently dropped spans).
+- One root span per chat/distill/compare request (middleware); child spans for retrieval, every Gemini call (`llm.py` → `tracing.llm_call`) and Firestore writes. Worker threads must use `tracing.wrap(fn)` to keep the request context.
+- Every LLM call is also recorded (capped `llm_calls`, separate from demo data) for `GET /api/traces`; JSON logs on Cloud Run carry `logging.googleapis.com/trace`. Recording/export must never raise into request code; flush happens before the response returns.
+
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
 - PII redaction is out of scope for V1 (planned for the next version).
@@ -34,6 +43,6 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Every LLM call that returns data uses Gemini structured output (`response_mime_type="application/json"` + `response_schema`). Don't parse free text with regexes.
 - Prompts live in `app/prompts.py`.
 - Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store). Dev deps: `requirements-dev.txt`; the image installs only `requirements.txt`.
-- Must stay green: `pytest`; `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
+- Must stay green: `pytest`; `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
 - Firestore database is `ORGMIND_FIRESTORE_DATABASE` (default `(default)` = demo). Seeding happens on startup only when the store is empty.
 - Deploy: `gcloud run deploy orgmind --source . --region $GOOGLE_CLOUD_LOCATION`.
