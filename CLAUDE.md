@@ -36,7 +36,8 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
-- PII redaction is out of scope for V1 (planned for the next version).
+- On Cloud Run the admin token comes from Secret Manager (`orgmind-admin-token`), not a plain env var. Never print it.
+- PII redaction and review-before-publish are deferred to V3.
 
 ## Conventions
 - Python 3.12+, Pydantic v2. `app/models.py` is the single source of truth for data shapes.
@@ -45,4 +46,4 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store). Dev deps: `requirements-dev.txt`; the image installs only `requirements.txt`.
 - Must stay green: `pytest`; `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
 - Firestore database is `ORGMIND_FIRESTORE_DATABASE` (default `(default)` = demo). Seeding happens on startup only when the store is empty.
-- Deploy: `gcloud run deploy orgmind --source . --region $GOOGLE_CLOUD_LOCATION`.
+- Deploy: see README "Deploy (Cloud Run)" (keeps `--set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest` and `ORGMIND_TRACING=cloudtrace`).
