@@ -1,1 +1,113 @@
-<!doctype html><title>OrgMind</title><p>OrgMind API is running. UI coming soon.</p>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OrgMind · Acme Corp</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l7 7-7 7-7-7z' fill='%2360a5fa'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span> OrgMind <span class="org" id="org-name">Acme Corp</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="compare" role="tab">Compare</button>
+      <button class="tab" data-view="chat" role="tab">Chat</button>
+    </nav>
+    <div class="topbar-right">
+      <span class="badge" id="mode-badge" title="LLM / store mode">…</span>
+      <button class="btn ghost small" id="reset-btn" title="Reset demo data (admin)">Reset demo</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ============ COMPARE VIEW ============ -->
+    <section class="view" id="view-compare">
+      <div class="panel compare-input">
+        <h2>Same question, two agents</h2>
+        <p class="muted">Left: the agent alone. Right: the same agent with playbooks OrgMind distilled from other employees' sessions.</p>
+        <div class="row">
+          <select id="compare-agent"></select>
+          <input id="compare-question" type="text" placeholder="Ask something an employee would ask…">
+          <button class="btn primary" id="compare-btn">Ask both</button>
+        </div>
+        <div class="chips" id="compare-presets"></div>
+      </div>
+      <div class="compare-grid">
+        <article class="panel answer-card">
+          <header><span class="dot grey"></span> Without playbooks <span class="muted">· siloed agent</span></header>
+          <div class="answer" id="baseline-answer"><p class="muted">Ask a question to compare.</p></div>
+        </article>
+        <article class="panel answer-card highlight">
+          <header><span class="dot green"></span> With OrgMind playbooks</header>
+          <div class="answer" id="playbook-answer"><p class="muted">Ask a question to compare.</p></div>
+          <footer class="citations" id="playbook-citations"></footer>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ CHAT VIEW ============ -->
+    <section class="view hidden" id="view-chat">
+      <aside class="panel sidebar">
+        <label class="field">Signed in as
+          <select id="employee-select"></select>
+        </label>
+        <label class="field">Agent
+          <select id="agent-select"></select>
+        </label>
+        <button class="btn primary block" id="new-session-btn">+ New conversation</button>
+        <h3>Conversations</h3>
+        <ul class="session-list" id="session-list"></ul>
+      </aside>
+      <section class="panel chat">
+        <header class="chat-header" id="chat-header">Select or start a conversation</header>
+        <div class="messages" id="messages"></div>
+        <form class="composer" id="composer">
+          <input id="message-input" type="text" placeholder="Message the agent…" autocomplete="off" disabled>
+          <label class="toggle" title="Let the agent use org playbooks"><input type="checkbox" id="use-playbooks" checked> playbooks</label>
+          <button class="btn primary" id="send-btn" disabled>Send</button>
+        </form>
+      </section>
+    </section>
+
+    <!-- ============ ORG KNOWLEDGE (always visible) ============ -->
+    <aside class="panel knowledge">
+      <div class="knowledge-head">
+        <h2>Org knowledge</h2>
+        <button class="btn primary small" id="distill-btn">Distill sessions</button>
+      </div>
+      <p class="muted small">The distiller finds problems that recur across different employees' sessions and compiles playbooks from resolved ones.</p>
+      <div id="distill-report"></div>
+      <h3>Playbooks <span class="count" id="playbook-count">0</span></h3>
+      <ul class="playbook-list" id="playbook-list"></ul>
+    </aside>
+  </main>
+
+  <!-- playbook detail modal -->
+  <div class="modal hidden" id="modal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <button class="modal-close" id="modal-close" aria-label="Close">×</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- admin token prompt -->
+  <div class="modal hidden" id="token-modal" role="dialog" aria-modal="true">
+    <div class="modal-card narrow">
+      <h3>Reset demo data</h3>
+      <p class="muted small">Wipes all sessions and playbooks and re-seeds Acme Corp. Requires the admin token.</p>
+      <input id="token-input" type="password" placeholder="Admin token">
+      <p class="error small" id="token-error"></p>
+      <div class="row end">
+        <button class="btn ghost" id="token-cancel">Cancel</button>
+        <button class="btn danger" id="token-confirm">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

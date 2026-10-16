@@ -189,7 +189,8 @@ def distill(org_id: str, agent_kind: str | None = None) -> DistillReport:
             reports.append(rep)
 
             if len({x.employee_id for x in resolved}) < MIN_EMPLOYEES:
-                rep.reason = f"needs resolved sessions from >= {MIN_EMPLOYEES} distinct employees"
+                rep.reason = ("recurring, but nobody has resolved it yet" if not resolved else
+                              f"resolved by only one employee (needs {MIN_EMPLOYEES})")
                 continue
 
             existing = _find_existing(cluster, _centroid(resolved), playbooks, s.cluster_threshold)

@@ -22,7 +22,8 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - A playbook needs a cluster of similar sessions from **at least 2 distinct employees** with resolved sessions. Repeats by a single employee don't count.
 - **Only resolved sessions contribute steps.** Unresolved sessions in a cluster are recorded as related but are never sent to the playbook compiler.
 - If a cluster matches an existing playbook (shared source session or centroid similarity), the playbook is recompiled from the union of sources and `version` is bumped. There is no elaborate merge logic.
-- Thresholds: `ORGMIND_CLUSTER_THRESHOLD` and `ORGMIND_RETRIEVAL_THRESHOLD`. Tune them with `scripts/eval_questions.py`.
+- Playbooks must generalize: the writer classifies `org_wide_facts` (kept: commands, menu paths, policy limits, deadlines) vs `excluded_specifics` (one person's names, cost centers, amounts). A leaked specific triggers one recompile, then a placeholder replacement; org-wide facts are never scrubbed.
+- Thresholds: `ORGMIND_CLUSTER_THRESHOLD` (0.88) and `ORGMIND_RETRIEVAL_THRESHOLD` (0.62). Gemini embeddings put unrelated support chats at ~0.8, so clustering is complete-linkage. Tune with `scripts/eval_questions.py` against real Gemini (fake mode fails it by design).
 
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
