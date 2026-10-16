@@ -152,6 +152,8 @@ pre code { background: none; color: inherit; padding: 0; }
 .tag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); margin-right: 4px; }
 .tag.dev { background: #eef2ff; color: #4338ca; } .tag.hr { background: #fdf2f8; color: #be185d; }
 .report { background: var(--bg); border-radius: 8px; padding: 10px; font-size: 12px; margin: 8px 0; }
+.report.running { border-left: 3px solid var(--accent); }
+.phase-line { font-weight: 600; margin-bottom: 4px; }
 .report .stats { display: flex; gap: 12px; font-weight: 600; margin-bottom: 6px; flex-wrap: wrap; }
 .report ul { margin: 6px 0 0; padding-left: 16px; }
 .report li { margin-bottom: 6px; }

@@ -192,8 +192,18 @@ function timings(t) {
 
 async function runDistill() {
   const btn = $("#distill-btn");
-  setBusy(btn, true, "Distilling…");
-  $("#distill-report").innerHTML = `<div class="report typing">Summarizing sessions, clustering across employees, compiling playbooks…</div>`;
+  setBusy(btn, true, "Distilling… 0s");
+  // The server doesn't stream progress, so show the pipeline order plus a real elapsed timer.
+  $("#distill-report").innerHTML = `<div class="report running">
+    <div class="phase-line">Summarizing sessions → clustering → writing playbooks</div>
+    <div class="muted">Running · <span id="distill-elapsed">0</span>s elapsed (live Gemini; usually 10–55s)</div></div>`;
+  const t0 = Date.now();
+  const timer = setInterval(() => {
+    const secs = Math.floor((Date.now() - t0) / 1000);
+    btn.textContent = `Distilling… ${secs}s`;
+    const el = $("#distill-elapsed");
+    if (el) el.textContent = secs;
+  }, 1000);
   try {
     const r = await api("/api/distill", { method: "POST", body: {} });
     const items = r.clusters.map((c) => {
@@ -205,13 +215,14 @@ async function runDistill() {
     $("#distill-report").innerHTML = `<div class="report">
       <div class="stats"><span>${r.sessions_scanned} sessions</span><span>${r.clusters.length} recurring clusters</span>
         <span class="outcome created">+${r.playbooks_created} new</span><span class="outcome updated">${r.playbooks_updated} updated</span></div>
-      <div class="muted">${r.sessions_summarized} summarized this run · ${timings(r.timings_s)}</div>
+      <div class="muted">${r.sessions_summarized} summarized this run · ${timings(r.timings_s)} · ${Math.round((Date.now() - t0) / 1000)}s end to end</div>
       ${items ? `<ul>${items}</ul>` : ""}</div>`;
     const changed = r.clusters.filter((c) => ["created", "updated"].includes(c.outcome)).map((c) => c.playbook_id);
     await loadPlaybooks(changed);
   } catch (e) {
     $("#distill-report").innerHTML = `<div class="report error">${escapeHtml(e.message)}</div>`;
   } finally {
+    clearInterval(timer);
     setBusy(btn, false, "Distill sessions");
   }
 }
