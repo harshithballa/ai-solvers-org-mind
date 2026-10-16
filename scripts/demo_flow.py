@@ -58,6 +58,11 @@ with sync_playwright() as p:
 
     # 2. distill
     t = time.time(); page.click("#distill-btn")
+    page.wait_for_selector("#distill-report .phase-line", timeout=5000)
+    page.wait_for_function("/Distilling… [1-9]\\d*s/.test(document.querySelector('#distill-btn').textContent)", timeout=10000)
+    step("distill shows phase line + elapsed timer while running",
+         "Summarizing sessions → clustering → writing playbooks" in page.text_content("#distill-report"),
+         page.text_content("#distill-btn"))
     page.wait_for_function("document.querySelector('#distill-btn').textContent === 'Distill sessions'", timeout=180000)
     n = page.text_content("#playbook-count")
     step("distill", n == "2", f"playbooks={n} in {time.time()-t:.1f}s; report={page.text_content('#distill-report')[:120]!r}")
@@ -94,7 +99,8 @@ with sync_playwright() as p:
     page.click("#send-btn")
     page.wait_for_selector(".msg.assistant .bubble:not(.typing)", timeout=120000)
     step("chat reply cites playbook", page.locator(".msg.assistant .chip.cite").count() == 1)
-    page.fill("#message-input", "I did that but still get permission denied. What next?")
+    page.fill("#message-input", "I ran acme auth refresh --vault on the VPN, but acme deploy staging still says vault permission denied. "
+                 "Which group do I need and how do I request access?")
     page.click("#send-btn")
     page.wait_for_function("document.querySelectorAll('.msg.assistant .bubble:not(.typing)').length === 2", timeout=120000)
     last = page.locator(".msg.assistant .bubble").nth(1).text_content()

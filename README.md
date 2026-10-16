@@ -142,6 +142,20 @@ The runtime service account needs `roles/aiplatform.user` and `roles/datastore.u
    gives the AcmePeople path, the *Remote Work Stipend* category and the $500 limit. It never mentions
    another employee's cost center.
 
+## Observability notes
+
+- **Cloud Trace export goes through OTLP.** The standard Cloud Trace exporter
+  (`opentelemetry-exporter-gcp-trace` / `CloudTraceSpanExporter`, now deprecated) silently dropped our spans:
+  none arrived in Cloud Trace. OrgMind therefore exports OpenTelemetry spans over **OTLP/gRPC to
+  `telemetry.googleapis.com`** (the Telemetry API), which is Google's recommended ingestion path. Enable it with
+  `ORGMIND_TRACING=cloudtrace`.
+
+## Known limitations
+
+- **Live Distill can take 20–55s.** Most calls are fast (~1s per summary), but in traces a few `summarize` calls
+  take ~20s. That is most likely Vertex AI rate-limit (429) retries with backoff during the parallel summarize
+  burst. The UI shows an elapsed timer while it runs. Tuning summarize concurrency and retry/backoff is planned.
+
 ## Roadmap (next version)
 
 - **PII redaction and guardrails** before sessions reach the distiller (names, emails, IDs, secrets), plus
