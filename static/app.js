@@ -21,6 +21,7 @@ const state = {
   playbooks: {},   // id -> playbook
   sessionId: null,
   busy: false,
+  health: {},
 };
 
 // ---------------- helpers ----------------
@@ -117,6 +118,7 @@ async function loadOrg() {
   state.agents = Object.fromEntries(org.agents.map((a) => [a.id, a]));
   $("#org-name").textContent = org.org.name;
 
+  state.health = health;
   const badge = $("#mode-badge");
   badge.textContent = `${health.llm === "vertex" ? health.chat_model : "FAKE LLM"} · ${health.store}`;
   badge.classList.toggle("warn", health.llm !== "vertex");
@@ -183,6 +185,11 @@ async function loadPlaybooks(flashIds = []) {
 
 function empName(id) { return state.employees[id]?.name || id; }
 
+function timings(t) {
+  if (!t) return "";
+  return `summarize ${t.summarize}s · compile ${t.compile}s · total ${t.total}s`;
+}
+
 async function runDistill() {
   const btn = $("#distill-btn");
   setBusy(btn, true, "Distilling…");
@@ -193,12 +200,12 @@ async function runDistill() {
       const who = c.employee_ids.map(empName).join(", ");
       const label = c.title ? escapeHtml(c.title) : escapeHtml(c.reason);
       return `<li><span class="outcome ${c.outcome}">${c.outcome}</span> <span class="tag ${c.agent_kind}">${c.agent_kind}</span>
-        ${label}<br><span class="muted">${c.session_ids.length} sessions · ${c.resolved_session_ids.length} resolved · ${escapeHtml(who)}</span></li>`;
+        ${label}<br><span class="muted">${c.session_ids.length} sessions · ${c.resolved_session_ids.length} resolved · ${c.employee_ids.length} employee${c.employee_ids.length === 1 ? "" : "s"}: ${escapeHtml(who)}</span></li>`;
     }).join("");
     $("#distill-report").innerHTML = `<div class="report">
       <div class="stats"><span>${r.sessions_scanned} sessions</span><span>${r.clusters.length} recurring clusters</span>
         <span class="outcome created">+${r.playbooks_created} new</span><span class="outcome updated">${r.playbooks_updated} updated</span></div>
-      <div class="muted">${r.sessions_summarized} summarized this run · ${r.timings_s?.total ?? "?"}s</div>
+      <div class="muted">${r.sessions_summarized} summarized this run · ${timings(r.timings_s)}</div>
       ${items ? `<ul>${items}</ul>` : ""}</div>`;
     const changed = r.clusters.filter((c) => ["created", "updated"].includes(c.outcome)).map((c) => c.playbook_id);
     await loadPlaybooks(changed);
@@ -337,14 +344,130 @@ async function confirmReset() {
   }
 }
 
-// ---------------- wiring ----------------
+// ---------------- traces ----------------
 
-function switchView(view) {
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
-  $("#view-compare").classList.toggle("hidden", view !== "compare");
-  $("#view-chat").classList.toggle("hidden", view !== "chat");
-  if (view === "chat") loadSessions().catch((e) => toast(e.message, true));
+const fmtMs = (ms) => (ms == null ? "–" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`);
+
+function cloudTraceUrl(traceId) {
+  const project = state.health.project;
+  if (!project) return "";
+  return traceId ? `https://console.cloud.google.com/traces/list?project=${encodeURIComponent(project)}&tid=${encodeURIComponent(traceId)}`
+                 : `https://console.cloud.google.com/traces/list?project=${encodeURIComponent(project)}`;
 }
+
+// Group recorded LLM calls by request trace, newest first.
+function renderTraces(calls, compact) {
+  if (!calls.length) return `<p class="muted">No LLM calls recorded yet. Ask a question, chat or run Distill.</p>`;
+  const groups = [];
+  const byId = {};
+  for (const c of calls) {
+    const key = c.trace_id || c.id;
+    if (!byId[key]) { byId[key] = { key, trace_id: c.trace_id, request: c.request, ts: c.ts, calls: [] }; groups.push(byId[key]); }
+    byId[key].calls.push(c);
+  }
+  return groups.map((g) => {
+    const total = g.calls.reduce((a, c) => a + (c.latency_ms || 0), 0);
+    const errs = g.calls.filter((c) => c.error).length;
+    const tin = g.calls.reduce((a, c) => a + (c.input_tokens || 0), 0);
+    const tout = g.calls.reduce((a, c) => a + (c.output_tokens || 0), 0);
+    const link = g.trace_id && state.health.tracing === "cloudtrace" ? cloudTraceUrl(g.trace_id) : "";
+    const rows = g.calls.map((c) => `
+      <tr class="${c.error ? "err" : ""}">
+        <td><code>${escapeHtml(c.operation)}</code></td><td>${escapeHtml(c.model || "")}</td>
+        <td>${fmtMs(c.latency_ms)}</td>
+        <td>${c.input_tokens ?? "–"} / ${c.output_tokens ?? "–"}</td>
+        <td>${(c.playbook_ids || []).map((id) => `<button class="chip cite small" data-playbook="${escapeHtml(id)}">${escapeHtml(state.playbooks[id]?.title || id)}</button>`).join("") || ""}</td>
+        <td>${c.error ? `<span class="error">${escapeHtml(c.error)}</span>` : ""}
+          ${compact ? "" : `<details><summary>excerpt</summary><div class="excerpt"><b>prompt</b><pre>${escapeHtml(c.prompt_excerpt || "")}</pre><b>response</b><pre>${escapeHtml(c.response_excerpt || "")}</pre></div></details>`}</td>
+      </tr>`).join("");
+    return `<div class="trace-group">
+      <div class="row between trace-head">
+        <span><strong>${escapeHtml(g.request || "request")}</strong> <span class="muted">· ${g.calls.length} calls · ${fmtMs(total)} in model calls${tin || tout ? ` · ${tin}/${tout} tokens` : ""}${errs ? ` · <span class="error">${errs} errors</span>` : ""} · ${timeAgo(g.ts)}</span></span>
+        ${link ? `<a class="small" href="${link}" target="_blank" rel="noopener">Cloud Trace ↗</a>` : ""}
+      </div>
+      <div class="table-wrap"><table class="table compact"><thead><tr><th>Operation</th><th>Model</th><th>Latency</th><th>Tokens in/out</th><th>Playbooks</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
+}
+
+async function loadTraces(target, compact) {
+  target.innerHTML = `<p class="typing">Loading…</p>`;
+  try {
+    const { calls } = await api(`/api/traces?limit=${compact ? 20 : 50}`);
+    target.innerHTML = renderTraces(calls, compact);
+  } catch (e) {
+    target.innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function openDrawer() {
+  $("#trace-drawer").hidden = false;
+  loadTraces($("#drawer-body"), true);
+}
+
+// ---------------- routing ----------------
+
+const ROUTES = {
+  user: [
+    { id: "chat", label: "Chat" },
+    { id: "connections", label: "Connections", preview: true },
+    { id: "upload", label: "Upload", preview: true },
+  ],
+  admin: [
+    { id: "knowledge", label: "Knowledge" },
+    { id: "traces", label: "Traces" },
+    { id: "agents", label: "Agents", preview: true },
+    { id: "users", label: "Users & Teams", preview: true },
+    { id: "mcps", label: "MCPs", preview: true },
+    { id: "skills", label: "Skills & Sub-agents", preview: true },
+    { id: "guardrails", label: "Guardrails", preview: true },
+    { id: "roadmap", label: "Roadmap" },
+  ],
+};
+const DEFAULT_ROUTE = "#/admin/knowledge";
+
+function parseRoute() {
+  const [, mode, tab] = (location.hash.match(/^#\/(user|admin)\/([a-z]+)/) || []);
+  if (mode && ROUTES[mode].some((r) => r.id === tab)) return { mode, tab };
+  return null;
+}
+
+function route() {
+  const r = parseRoute();
+  if (!r) { history.replaceState(null, "", DEFAULT_ROUTE); return route(); }
+  const key = `${r.mode}-${r.tab}`;
+  document.querySelectorAll(".mode-switch a").forEach((a) => a.classList.toggle("active", a.dataset.mode === r.mode));
+  $("#subnav").innerHTML = ROUTES[r.mode].map((t) =>
+    `<a href="#/${r.mode}/${t.id}" class="${t.id === r.tab ? "active" : ""}">${escapeHtml(t.label)}${t.preview ? `<span class="nav-preview" title="Preview · planned">preview</span>` : ""}</a>`).join("");
+  document.querySelectorAll(".page").forEach((p) => { p.hidden = p.id !== `page-${key}`; });
+  if (window.OrgMindPreviews?.has(key)) window.OrgMindPreviews.render(key, state);
+  if (key === "user-chat") loadSessions().catch((e) => toast(e.message, true));
+  if (key === "admin-traces") {
+    $("#cloud-trace-link").href = cloudTraceUrl() || "#";
+    $("#cloud-trace-link").hidden = !cloudTraceUrl();
+    loadTraces($("#traces-view"), false);
+  }
+}
+
+// ---------------- collapsible side panels ----------------
+
+function initPanels() {
+  document.querySelectorAll("[data-collapsible]").forEach((panel) => {
+    const key = `orgmind_panel_${panel.dataset.collapsible}`;
+    const set = (collapsed) => {
+      panel.classList.toggle("collapsed", collapsed);
+      panel.closest(".split")?.classList.toggle("side-collapsed", collapsed);
+      try { localStorage.setItem(key, collapsed ? "1" : "0"); } catch {}
+    };
+    let saved = "0";
+    try { saved = localStorage.getItem(key) || "0"; } catch {}
+    set(saved === "1");
+    panel.querySelector(".collapse-btn").addEventListener("click", () => set(true));
+    panel.querySelector(".rail").addEventListener("click", () => set(false));
+  });
+}
+
+// ---------------- wiring ----------------
 
 document.addEventListener("click", (e) => {
   const pb = e.target.closest("[data-playbook]");
@@ -353,10 +476,13 @@ document.addEventListener("click", (e) => {
   if (preset) { $("#compare-question").value = preset.dataset.q; return runCompare(); }
   const ses = e.target.closest("[data-session]");
   if (ses) return openSession(ses.dataset.session).catch((err) => toast(err.message, true));
-  const tab = e.target.closest(".tab");
-  if (tab) return switchView(tab.dataset.view);
 });
 
+window.addEventListener("hashchange", route);
+$("#trace-btn").addEventListener("click", openDrawer);
+$("#drawer-close").addEventListener("click", () => { $("#trace-drawer").hidden = true; });
+$("#drawer-all").addEventListener("click", () => { $("#trace-drawer").hidden = true; });
+$("#traces-refresh").addEventListener("click", () => loadTraces($("#traces-view"), false));
 $("#compare-btn").addEventListener("click", runCompare);
 $("#compare-question").addEventListener("keydown", (e) => { if (e.key === "Enter") runCompare(); });
 $("#compare-agent").addEventListener("change", renderPresets);
@@ -377,14 +503,16 @@ $("#token-cancel").addEventListener("click", () => $("#token-modal").classList.a
 $("#token-confirm").addEventListener("click", confirmReset);
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") confirmReset(); });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { $("#modal").classList.add("hidden"); $("#token-modal").classList.add("hidden"); }
+  if (e.key === "Escape") { $("#modal").classList.add("hidden"); $("#token-modal").classList.add("hidden"); $("#trace-drawer").hidden = true; }
 });
 
 (async () => {
+  initPanels();
   try {
     await loadOrg();
     await loadPlaybooks();
   } catch (e) {
     toast(`Failed to load: ${e.message}`, true);
   }
+  route();
 })();

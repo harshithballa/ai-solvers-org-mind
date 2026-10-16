@@ -37,7 +37,8 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text} @ {m.location.get('url')}") if m.type == "error" and "401" not in m.text else None)
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     page.goto(BASE); page.wait_for_selector("#compare-presets .chip", timeout=120000)
-    step("load", True, f"badge={page.text_content('#mode-badge')!r}")
+    step("load: lands on Admin > Knowledge (compare)", page.url.endswith("#/admin/knowledge")
+         and page.is_visible("#page-admin-knowledge"), f"url={page.url} badge={page.text_content('#mode-badge')!r}")
 
     # 0. reset: wrong token rejected, right token resets to seeded state
     page.click("#reset-btn"); page.fill("#token-input", "wrong"); page.click("#token-confirm")
@@ -86,7 +87,7 @@ with sync_playwright() as p:
          page.text_content("#playbook-citations")[:120])
 
     # 6. chat as Dana with Dev agent
-    page.click(".tab[data-view=chat]")
+    page.click(".mode-switch a[data-mode=user]"); page.wait_for_selector("#page-user-chat:not([hidden])")
     step("chat defaults to Dana", page.input_value("#employee-select") == "e_dana")
     page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
     page.fill("#message-input", "Hi, I'm new. acme deploy staging fails with ACME_VAULT_TOKEN expired, what do I do?")
@@ -119,7 +120,8 @@ with sync_playwright() as p:
     step("seeded session opens", page.locator(".msg").count() >= 4)
 
     # 10. narrow viewport sanity
-    page.set_viewport_size({"width": 420, "height": 900}); page.click(".tab[data-view=compare]")
+    page.set_viewport_size({"width": 400, "height": 900}); page.click(".mode-switch a[data-mode=admin]")
+    page.wait_for_selector("#page-admin-knowledge:not([hidden])")
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     step("mobile width: no horizontal overflow", overflow <= 0, f"overflow={overflow}px")
     page.screenshot(path=f"{SHOTS}/7_mobile.png", full_page=True)
