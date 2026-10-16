@@ -1,0 +1,25 @@
+# Python / tooling
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+service-account*.json
+*credentials*.json
+application_default_credentials.json
+
+# Local / temp
+*.log
+*.tmp
+.DS_Store
+.idea/
+.vscode/
