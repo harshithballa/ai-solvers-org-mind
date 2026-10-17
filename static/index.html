@@ -131,7 +131,7 @@
             <label class="switch"><input type="checkbox" id="use-skills">
               <span><b>Skills</b><small>Procedures you approved from your own chats</small></span></label>
             <label class="switch" id="rag-toggle"><input type="checkbox" id="use-rag">
-              <span><b>My documents</b><small id="rag-help">Answer only from my uploaded documents</small></span></label>
+              <span><b>Documents</b><small id="rag-help">Answer only from documents you can see (yours and shared)</small></span></label>
           </div>
           <form class="composer" id="composer">
             <input id="message-input" type="text" placeholder="Message the agent…" autocomplete="off" disabled>
@@ -142,7 +142,7 @@
         <aside class="panel knowledge collapsed-narrow" id="knowledge" aria-label="My knowledge">
           <button class="knowledge-toggle" id="knowledge-toggle" aria-expanded="false">My knowledge <span aria-hidden="true">▾</span></button>
           <div class="knowledge-body">
-            <div class="row between kn-head"><h2>My knowledge</h2><span class="muted small">Private to you</span></div>
+            <div class="row between kn-head"><h2>My knowledge</h2><span class="muted small">Private unless you share</span></div>
 
             <div class="kn-section">
               <div class="row between"><h3>Documents <span class="count" id="doc-count">0</span></h3>
@@ -173,6 +173,11 @@
               <h3>Skills <span class="count" id="skill-count">0</span></h3>
               <ul class="skill-list" id="skill-list"></ul>
             </div>
+
+            <div class="kn-section">
+              <h3>Shared by colleagues <span class="count" id="shared-count">0</span></h3>
+              <ul class="shared-list" id="shared-list"></ul>
+            </div>
           </div>
         </aside>
       </div>
@@ -183,7 +188,22 @@
     <section class="page preview-page" id="page-admin-users" hidden></section>
     <section class="page preview-page" id="page-admin-mcps" hidden></section>
     <section class="page preview-page" id="page-admin-skills" hidden></section>
-    <section class="page preview-page" id="page-admin-guardrails" hidden></section>
+    <!-- ======================= ADMIN › GUARDRAILS (real) ======================= -->
+    <section class="page" id="page-admin-guardrails" hidden>
+      <div class="panel">
+        <div class="row between">
+          <div>
+            <h2>Guardrails</h2>
+            <p class="muted">Before a document or skill is shared with the org it is scanned automatically for personal data and secrets:
+              deterministic patterns, then a Gemini check that tells org-wide facts from personal values. If the Gemini check
+              fails, the share is blocked (fail closed). <b>Human review before publishing is planned, not built.</b>
+              Findings are stored as categories only, never values.</p>
+          </div>
+          <button class="btn primary small" id="guardrail-refresh">Refresh</button>
+        </div>
+        <div id="guardrail-view"></div>
+      </div>
+    </section>
 
     <!-- ======================= ADMIN › ROADMAP (real, static) ======================= -->
     <section class="page" id="page-admin-roadmap" hidden></section>

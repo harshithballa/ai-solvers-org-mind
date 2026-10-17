@@ -8,7 +8,7 @@ from typing import Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, RagDoc, Session, Skill
+from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, RagDoc, Session, ShareEvent, Skill
 from app.tracing import span
 
 T = TypeVar("T", bound=BaseModel)
@@ -21,10 +21,13 @@ COLLECTIONS: dict[type[BaseModel], str] = {
     Playbook: "playbooks",
     RagDoc: "rag_docs",
     Skill: "skills",          # derived from (seeded) sessions, so demo reset wipes them like playbooks
+    ShareEvent: "share_events",
 }
 # Demo reset wipes these. rag_docs survives: its rows own real GCS objects / index documents, and
 # losing them would orphan those documents (search hits would then be dropped as unowned).
-RESET_COLLECTIONS = [c for c in COLLECTIONS.values() if c != "rag_docs"]
+# share_events is an audit log and survives reset too.
+KEEP_ON_RESET = {"rag_docs", "share_events"}
+RESET_COLLECTIONS = [c for c in COLLECTIONS.values() if c not in KEEP_ON_RESET]
 
 
 class Store(Protocol):
@@ -51,9 +54,10 @@ class MemoryStore:
 
     def reset(self) -> None:
         with self._lock:
-            kept = getattr(self, "_data", {}).get("rag_docs", {})
+            old = getattr(self, "_data", {})
             self._data: dict[str, dict[str, dict]] = {c: {} for c in COLLECTIONS.values()}
-            self._data["rag_docs"] = kept
+            for c in KEEP_ON_RESET:
+                self._data[c] = old.get(c, {})
             self._messages: dict[str, list[dict]] = {}
 
     def put(self, obj: BaseModel) -> None:

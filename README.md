@@ -52,11 +52,12 @@ control on them is disabled, and they make no network calls.
 | Distillation | Only resolved sessions give steps; per-person values dropped | ✅ Working now |
 | Distillation | Traces: Cloud Trace + in-app trace view (*Admin › Traces*) | ✅ Working now |
 | Distillation | Upload local assistant sessions | 🟣 V3 |
-| Distillation | PII redaction + review before publish (*Admin › Guardrails*) | 🟣 V3 |
+| Distillation | PII redaction of sessions before distill + review before publish | 🟣 V3 |
 | Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
 | Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
 | Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private) | ✅ Working now |
-| Playbooks / Skills | Share docs and skills with the org, behind a PII guardrail | 🔵 Next version (V2) |
+| Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (*Admin › Guardrails*) | ✅ Working now |
+| Playbooks / Skills | Human review of shared items before publish | 🔵 Next version (V2) |
 | Playbooks / Skills | Skill creation from playbooks | 🟠 December round |
 
 ## Architecture
@@ -204,6 +205,29 @@ Three kinds of knowledge, kept distinct in code and docs:
   on the message. Failures degrade to an answer without skills.
 - Spans: `skills.extract` (proposed/saved/rejected/redacted counts, latency) and `skills.retrieve` (candidates,
   kept, top score). Extraction calls appear in `llm_calls` as `extract_skills`.
+
+## Sharing with the org (Phase 4)
+
+An owner can share an **active** skill or a **ready** text document with the whole org. Colleagues then see it
+under *Shared by colleagues*, read-only, and their agents can retrieve and cite it with "Shared by <name>".
+- **Guardrail first** (`app/guardrail.py`). Layer 1: patterns (emails, international and Indian phone numbers,
+  Luhn-valid card numbers, Aadhaar- and SSN-style numbers, PAN, AWS access keys, bearer tokens/JWTs, private keys,
+  32+ character hex/base64 strings). Layer 2: a Gemini structured-output check that flags personal contact details,
+  identifiers, credentials, personal sandbox/project IDs, addresses, and health or financial details of individuals,
+  and does not flag org-wide facts (channels, role handles, tools, datasets, ticket IDs, policy values).
+  Publishing needs both layers clean, in the same request. **Fail closed:** if the Gemini check errors, nothing is
+  shared ("couldn't verify, try again"). Findings carry a category and a masked preview (e.g. `d***@g***.com`)
+  everywhere: API, UI, logs, spans and `share_events`. **There is no human review yet** (planned).
+- `POST /api/skills/{id}/share|unshare`, `POST /api/rag/docs/{id}/share|unshare` (owner only). PDFs can't be scanned
+  yet, so they can't be shared; text over 200 KB is too large to scan. Editing a shared skill makes it private again
+  until it is re-scanned. Sharing a document flips our own scope field, so it is instant (no re-import).
+- `POST /api/rag/docs/{id}/share-redacted`: a new document "<title> (redacted)" with every finding replaced by
+  `[REDACTED:<CATEGORY>]`, re-scanned and published only if clean (it then indexes like any upload). The original
+  stays private.
+- Every attempt is logged in `share_events` (categories only); *Admin › Guardrails* shows the detectors,
+  clean/blocked counts and the last 20 events.
+- `python -m scripts.guardrail_eval` checks the guardrail against real Gemini; `scripts/demo_prep.py` prepares a
+  demo state (dry run by default).
 
 ## Seed and reset
 

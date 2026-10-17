@@ -49,7 +49,9 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
 - On Cloud Run the admin token comes from Secret Manager (`orgmind-admin-token`), not a plain env var. Never print it.
-- PII redaction and review-before-publish are deferred to V3.
+- Sharing to the org goes through `app/guardrail.py` (patterns + Gemini, fail closed). Findings are category + masked
+  preview only, never raw values, in API responses, UI, logs, spans, `share_events` and `llm_calls` excerpts.
+  Human review before publish is planned (not built). PII redaction of sessions before distill is deferred to V3.
 
 ## Conventions
 - Python 3.12+, Pydantic v2. `app/models.py` is the single source of truth for data shapes.

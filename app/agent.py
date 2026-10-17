@@ -67,6 +67,18 @@ def replace_doc_ids(text: str, employee_id: str | None, org_id: str, hits: list[
     return _DOC_ID.sub(sub, text)
 
 
+def _colleague_names(items, employee_id: str | None) -> dict:
+    """id -> owner's name for org-shared items the asker doesn't own (attribution in the prompt)."""
+    from app.models import Employee
+    from app.store import get_store
+    out = {}
+    for it in items:
+        if it.owner_employee_id != employee_id:
+            e = get_store().get(Employee, it.owner_employee_id)
+            out[it.id] = e.name if e else "a colleague"
+    return out
+
+
 def _schema(skills_on: bool, docs_on: bool):
     return {(False, False): AnswerOut, (False, True): AnswerWithDocsOut,
             (True, False): AnswerWithSkillsOut, (True, True): AnswerWithSkillsAndDocsOut}[(skills_on, docs_on)]
@@ -103,14 +115,15 @@ def answer(agent: Agent, history: list[Message], question: str, use_playbooks: b
     rag_used = rag_on and rag_error is None  # a failed retrieval falls back to the plain prompt + schema
 
     labels = doc_labels(docs)
+    colleagues = _colleague_names([*skills, *(h.doc for h in docs)], employee_id)
 
     # Playbooks, then skills, then documents.
     system = agent.system_prompt
     system += PLAYBOOK_CONTEXT.format(playbooks=format_playbooks(playbooks)) if playbooks else NO_PLAYBOOKS_NOTE
     if skills:
-        system += SKILL_CONTEXT.format(skills=format_skills(skills))
+        system += SKILL_CONTEXT.format(skills=format_skills(skills, colleagues))
     if rag_used:
-        system += DOC_CONTEXT.format(docs=format_docs(docs, labels)) if docs else NO_DOCS_NOTE
+        system += DOC_CONTEXT.format(docs=format_docs(docs, labels, colleagues)) if docs else NO_DOCS_NOTE
 
     contents = [("user" if m.role == "user" else "model", m.content) for m in history[-HISTORY_TURNS:]]
     contents.append(("user", question + DOCS_ONLY_REMINDER if rag_used else question))

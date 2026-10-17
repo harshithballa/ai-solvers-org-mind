@@ -23,7 +23,7 @@ os.makedirs(args.shots, exist_ok=True)
 ROUTES = {  # route -> is preview
     "user": False,
     "admin/knowledge": False, "admin/traces": False, "admin/agents": True, "admin/users": True,
-    "admin/mcps": True, "admin/skills": True, "admin/guardrails": True, "admin/roadmap": False,
+    "admin/mcps": True, "admin/skills": True, "admin/guardrails": False, "admin/roadmap": False,
 }
 MUST_SAY_SAMPLE = {"admin/mcps"}
 SECTION = {"user": "#page-user-home"}

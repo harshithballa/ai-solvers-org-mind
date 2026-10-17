@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.distiller import DistillReport, distill
 from app.llm import get_llm
 from app.models import Agent, Employee, Message, Org, Playbook, RagDoc, Session, Skill, now
-from app import limits, rag_docs, skills
+from app import guardrail, limits, rag_docs, sharing, skills
 from app.rag import get_rag_provider
 from app.seed import ORG_ID, seed
 from app.store import get_store
@@ -316,10 +316,46 @@ async def upload_rag_doc(request: Request):
 
 
 @app.get("/api/rag/docs")
-def list_rag_docs(employee_id: str) -> list[RagDoc]:
+def list_rag_docs(employee_id: str):
     provider = _rag_provider_or_503()
     _get_or_404(Employee, employee_id)
-    return [rag_docs.refresh(provider, d) for d in rag_docs.visible_docs(ORG_ID, employee_id)]
+    return [_doc_payload(rag_docs.refresh(provider, d)) for d in rag_docs.visible_docs(ORG_ID, employee_id)]
+
+
+class DocAction(BaseModel):
+    employee_id: str
+
+
+@app.post("/api/rag/docs/{doc_id}/share")
+def share_rag_doc(doc_id: str, body: DocAction):
+    provider = _rag_provider_or_503()
+    limits.reserve_gemini(limits.ESTIMATE["share_scans"])
+    limits.hit("share_scans")
+    result, doc = _share_call(sharing.share_doc, provider, doc_id, body.employee_id)
+    return {**result.public(), "doc": _doc_payload(doc)}
+
+
+@app.post("/api/rag/docs/{doc_id}/unshare")
+def unshare_rag_doc(doc_id: str, body: DocAction):
+    _rag_provider_or_503()
+    return _doc_payload(_share_call(sharing.unshare_doc, doc_id, body.employee_id))
+
+
+@app.post("/api/rag/docs/{doc_id}/share-redacted")
+def share_redacted_rag_doc(doc_id: str, body: DocAction):
+    provider = _rag_provider_or_503()
+    try:
+        rag_docs.check_capacity(ORG_ID)
+    except rag_docs.CapacityError as e:
+        raise HTTPException(429, str(e)) from None
+    limits.reserve_gemini((1 + sharing.MAX_REDACTION_ROUNDS) * limits.ESTIMATE["share_scans"])
+    limits.hit("share_scans", 2)
+    first, second, copy = _share_call(sharing.share_redacted_copy, provider, doc_id, body.employee_id)
+    if copy is not None:
+        limits.hit("rag_uploads")
+    final = second or first
+    return {**final.public(), "original_findings": first.public()["findings"],
+            "doc": _doc_payload(copy) if copy else None}
 
 
 class RagSearch(BaseModel):
@@ -341,8 +377,26 @@ def rag_search(body: RagSearch):
 
 # ---------- skills (one employee's learned procedures; not playbooks) ----------
 
+def _name(employee_id: str | None) -> str | None:
+    if not employee_id:
+        return None
+    e = get_store().get(Employee, employee_id)
+    return e.name if e else employee_id
+
+
 def _skill_payload(sk: Skill) -> dict:
-    return sk.model_dump(mode="json", exclude={"embedding"})
+    return {**sk.model_dump(mode="json", exclude={"embedding"}), "shared_by_name": _name(sk.shared_by)}
+
+
+def _doc_payload(d: RagDoc) -> dict:
+    return {**d.model_dump(mode="json"), "shared_by_name": _name(d.shared_by)}
+
+
+def _share_call(fn, *args):
+    try:
+        return fn(*args)
+    except sharing.ShareError as e:
+        raise HTTPException(e.status, str(e)) from None
 
 
 def _skill_call(fn, *args):
@@ -399,7 +453,25 @@ def archive_skill(skill_id: str, body: SkillAction):
 
 @app.patch("/api/skills/{skill_id}")
 def edit_skill(skill_id: str, body: SkillEdit):
-    return _skill_payload(_skill_call(skills.edit, skill_id, body.employee_id, body.name, body.description, body.steps))
+    sk, unshared = _skill_call(skills.edit, skill_id, body.employee_id, body.name, body.description, body.steps)
+    out = _skill_payload(sk)
+    if unshared:
+        out["unshared"] = True
+        out["message"] = "Edited, so it is private again. Share it again to re-scan the new content."
+    return out
+
+
+@app.post("/api/skills/{skill_id}/share")
+def share_skill(skill_id: str, body: SkillAction):
+    limits.reserve_gemini(limits.ESTIMATE["share_scans"])
+    limits.hit("share_scans")
+    result, sk = _share_call(sharing.share_skill, skill_id, body.employee_id)
+    return {**result.public(), "skill": _skill_payload(sk)}
+
+
+@app.post("/api/skills/{skill_id}/unshare")
+def unshare_skill(skill_id: str, body: SkillAction):
+    return _skill_payload(_share_call(sharing.unshare_skill, skill_id, body.employee_id))
 
 
 def _require_admin(token: str) -> None:
@@ -407,6 +479,22 @@ def _require_admin(token: str) -> None:
         raise HTTPException(403, "admin endpoints are disabled (ORGMIND_ADMIN_TOKEN not set)")
     if not limits.is_admin(token):
         raise HTTPException(401, "invalid admin token")
+
+
+@app.get("/api/guardrail/summary")
+def guardrail_summary(x_admin_token: str = Header(default="")):
+    """Detectors, clean/blocked counts and the last 20 share events (categories only, never values)."""
+    _require_admin(x_admin_token)
+    from app.models import ShareEvent
+    events = sorted(get_store().list(ShareEvent, org_id=ORG_ID), key=lambda e: e.created_at, reverse=True)
+    attempts = [e for e in events if e.action in ("share", "blocked", "redacted_copy")]
+    counts = {"clean": sum(e.verdict == "clean" for e in attempts),
+              "blocked": sum(e.verdict == "blocked" for e in attempts),
+              "couldnt_verify": sum(e.verdict == "error" for e in attempts),
+              "unshared": sum(e.action == "unshare" for e in events)}
+    return {"detectors": guardrail.detector_list(), "counts": counts, "human_review": "planned",
+            "events": [{**e.model_dump(mode="json", exclude={"org_id"}), "actor": _name(e.actor_employee_id)}
+                       for e in events[:20]]}
 
 
 @app.get("/api/usage")

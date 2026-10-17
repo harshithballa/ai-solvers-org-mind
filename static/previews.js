@@ -102,25 +102,6 @@
       </tbody></table></div>`;
   }
 
-  // ---------------- Admin › Guardrails ----------------
-  function guardrails() {
-    const v = "V3";
-    const toggle = (label, desc) => planned(v, `<label class="toggle-row"><input type="checkbox" disabled>
-      <span><strong>${label}</strong><br><span class="muted small">${desc}</span></span></label>`);
-    return `<div class="panel">${header("Guardrails", v,
-      "Protect people and quality before knowledge spreads. Today the distiller already drops per-person values from playbooks. V3 adds PII redaction before distillation and a human review step before a playbook publishes.")}
-      ${toggle("Redact PII before distillation", "Names, emails, phone numbers, employee IDs and secrets are masked in sessions before the distiller reads them.")}
-      ${toggle("Require review before a playbook publishes", "New and updated playbooks start as drafts; a team owner approves, edits or rejects them.")}
-      <fieldset class="field"><legend>Redact these entity types</legend>
-        ${["Person names", "Email addresses", "Phone numbers", "Employee / ticket IDs", "Credentials & tokens"].map((t) =>
-          planned(v, `<label class="check"><input type="checkbox" disabled> ${t}</label>`)).join("")}
-      </fieldset>
-      <h3>Review queue</h3>
-      <table class="table"><thead><tr><th>Playbook</th><th>Change</th><th>Reviewer</th><th></th></tr></thead>
-        <tbody><tr><td colspan="4" class="empty">No drafts. Review before publish is planned for V3.</td></tr></tbody></table>
-      <div class="row end">${btn(v, "Save guardrail settings")}</div></div>`;
-  }
-
   // ---------------- Admin › Roadmap (real, static) ----------------
   const ST = { now: "Working now", v2: "Next version (V2)", v3: "V3", dec: "December round" };
   const item = (st, text) => `<li class="st-${st}"><span class="st-dot"></span>${text}</li>`;
@@ -166,7 +147,8 @@
           <ul>${item("now", "Playbooks with sources and versions")}
               ${item("now", "Compare: with vs without playbooks")}
               ${item("now", "Skills learned from one employee's chat: review, approve, apply (private)")}
-              ${item("v2", "Share docs and skills with the org, behind a PII guardrail")}
+              ${item("now", "Share docs and skills with the org, behind an automatic PII/secret guardrail")}
+              ${item("v2", "Human review of shared items before publish")}
               ${item("dec", "Skill creation from playbooks")}</ul>
         </div>
       </div>
@@ -176,7 +158,7 @@
 
   const PAGES = {
     "admin-agents": agents, "admin-users": users,
-    "admin-mcps": mcps, "admin-skills": skills, "admin-guardrails": guardrails, "admin-roadmap": roadmap,
+    "admin-mcps": mcps, "admin-skills": skills, "admin-roadmap": roadmap,
   };
 
   window.OrgMindPreviews = {

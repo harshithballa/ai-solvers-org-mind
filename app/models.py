@@ -111,6 +111,8 @@ class RagDoc(BaseModel):
     status: RagStatus = "uploading"
     import_operation: str = ""
     error: str | None = None
+    shared_by: str | None = None         # employee id that shared it with the org (scope=org)
+    shared_at: datetime | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 
@@ -137,9 +139,24 @@ class Skill(BaseModel):
     scope: Literal["private", "org"] = "private"
     status: Literal["draft", "active", "archived"] = "draft"
     embedding: list[float] = []          # RETRIEVAL_DOCUMENT, normalized (same as playbooks)
+    shared_by: str | None = None         # employee id that shared it with the org (scope=org)
+    shared_at: datetime | None = None
     version: int = 1
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
+
+
+class ShareEvent(BaseModel):
+    """Audit log of share attempts. Holds finding CATEGORIES only, never raw or masked values."""
+    id: str = Field(default_factory=lambda: new_id("se"))
+    org_id: str
+    actor_employee_id: str
+    item_type: Literal["doc", "skill"]
+    item_id: str
+    action: Literal["share", "blocked", "unshare", "redacted_copy"]
+    verdict: str                          # clean | blocked | error | owner | edited | archived
+    finding_categories: list[str] = []
+    created_at: datetime = Field(default_factory=now)
 
 
 class LLMCall(BaseModel):
@@ -217,3 +234,13 @@ class AnswerWithSkillsAndDocsOut(BaseModel):
     used_playbook_ids: list[str] = Field(description="IDs of the provided playbooks actually used in the answer. Empty if none.")
     used_skill_ids: list[str] = Field(description="IDs of the provided skills actually applied in the answer. Empty if none.")
     used_doc_titles: list[str] = Field(description="Titles of the provided documents actually used in the answer, exactly as labelled. Empty if none.")
+
+
+class GuardrailFindingOut(BaseModel):
+    category: str = Field(description="One of PERSONAL_CONTACT, PERSONAL_ID, CREDENTIAL, PERSONAL_PROJECT, HOME_ADDRESS, HEALTH, FINANCIAL, OTHER_PERSONAL.")
+    quote: str = Field(description="The exact offending text, copied verbatim from the input (as short as possible).")
+    reason: str = Field(description="One short sentence on why this is personal or secret. Do not repeat the value itself.")
+
+
+class GuardrailOut(BaseModel):
+    findings: list[GuardrailFindingOut] = Field(description="Personal or secret values found. Empty list if the text only contains org-wide facts.")

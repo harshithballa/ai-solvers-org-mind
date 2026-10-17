@@ -43,19 +43,28 @@ def cosine(a: list[float], b: list[float]) -> float:
 ANSWER_MAX_TOKENS = 2048  # answers are typically < 600 tokens; JSON envelope included
 
 OPERATIONS = {"AnswerOut": "answer", "AnswerWithDocsOut": "answer", "AnswerWithSkillsOut": "answer",
-              "AnswerWithSkillsAndDocsOut": "answer", "SkillsOut": "extract_skills", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
+              "AnswerWithSkillsAndDocsOut": "answer", "SkillsOut": "extract_skills", "GuardrailOut": "guardrail_scan", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
 
 
 def _operation(schema) -> str:
     return OPERATIONS.get(schema.__name__, f"generate:{schema.__name__}")
 
 
-def _prompt_text(system, contents) -> str:
+# Operations whose input/output may contain personal values: the in-app trace records no excerpt for them.
+PRIVATE_OPERATIONS = {"guardrail_scan"}
+
+
+def _prompt_text(system, contents, schema=None) -> str:
+    if schema is not None and _operation(schema) in PRIVATE_OPERATIONS:
+        return "[withheld: content scanned by the PII guardrail]"
     body = contents if isinstance(contents, str) else "\n".join(f"{r}: {t}" for r, t in contents)
     return f"[system] {system[:200]}\n{body}"
 
 
 def _note_output(info: dict, out) -> None:
+    if hasattr(out, "findings"):   # guardrail: never record quotes of personal values
+        info["response"] = f"[withheld: {len(out.findings)} finding(s)]"
+        return
     info["response"] = out.model_dump_json()
     if hasattr(out, "used_playbook_ids"):
         info["playbook_ids"] = list(out.used_playbook_ids)
@@ -98,7 +107,7 @@ class VertexLLM:
             max_output_tokens=ANSWER_MAX_TOKENS if _operation(schema) == "answer" else None,
         )
         limits.hit("gemini_calls")  # every real Gemini call counts; raises LimitExceeded over the daily ceiling
-        with llm_call(_operation(schema), self._s.chat_model, _prompt_text(system, raw)) as info:
+        with llm_call(_operation(schema), self._s.chat_model, _prompt_text(system, raw, schema)) as info:
             resp = _retry(lambda: self._client.models.generate_content(
                 model=self._s.chat_model, contents=contents, config=config))
             usage = getattr(resp, "usage_metadata", None)
@@ -136,7 +145,7 @@ class FakeLLM:
     dim = 512
 
     def generate_json(self, system, contents, schema, fake, think=False):
-        with llm_call(_operation(schema), "fake", _prompt_text(system, contents)) as info:
+        with llm_call(_operation(schema), "fake", _prompt_text(system, contents, schema)) as info:
             out = fake()
             _note_output(info, out)
             return out

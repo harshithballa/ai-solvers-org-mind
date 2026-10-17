@@ -220,19 +220,27 @@ def archive(skill_id: str, employee_id: str) -> Skill:
     sk = _owned(skill_id, employee_id)
     if sk.status == "archived":
         raise SkillError(409, "skill is already archived")
+    was_shared = sk.scope == "org"
     sk.status, sk.updated_at = "archived", now()
+    if was_shared:   # archived skills are never retrieved; take it off the org list too
+        sk.scope, sk.shared_by, sk.shared_at = "private", None, None
     get_store().put(sk)
+    if was_shared:
+        from app.sharing import record
+        record(sk.org_id, employee_id, "skill", sk.id, "unshare", "archived")
     return sk
 
 
 def edit(skill_id: str, employee_id: str, name: str | None, description: str | None,
-         steps: list[str] | None) -> Skill:
+         steps: list[str] | None) -> tuple[Skill, bool]:
+    """Returns (skill, unshared). Editing an org-shared skill makes it private again: the new content has not
+    been through the guardrail, so it must be re-scanned (shared again) before colleagues can use it."""
     sk = _owned(skill_id, employee_id)
     if sk.status == "archived":
         raise SkillError(409, "archived skills can't be edited")
     changes = {k: v for k, v in {"name": name, "description": description, "steps": steps}.items() if v is not None}
     if not changes:
-        return sk
+        return sk, False
     if "steps" in changes and not [s for s in changes["steps"] if s.strip()]:
         raise SkillError(400, "a skill needs at least one step")
     candidate = sk.model_copy(update=changes)
@@ -240,9 +248,15 @@ def edit(skill_id: str, employee_id: str, name: str | None, description: str | N
         raise SkillError(400, f"edit rejected: looks like it contains secrets or personal values ({', '.join(hits)})")
     candidate.version += 1
     candidate.updated_at = now()
+    unshared = candidate.scope == "org"
+    if unshared:
+        candidate.scope, candidate.shared_by, candidate.shared_at = "private", None, None
     [candidate.embedding] = get_llm().embed([skill_doc_text(candidate)], "RETRIEVAL_DOCUMENT")
     get_store().put(candidate)
-    return candidate
+    if unshared:
+        from app.sharing import record
+        record(candidate.org_id, employee_id, "skill", candidate.id, "unshare", "edited")
+    return candidate, unshared
 
 
 # ---------------- retrieval ----------------

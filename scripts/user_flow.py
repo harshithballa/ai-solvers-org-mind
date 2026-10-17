@@ -2,7 +2,8 @@
 
     python scripts/user_flow.py --url http://localhost:8092 --shots <dir>
 
-Run the server with ORGMIND_STORE=memory (never production data), ORGMIND_LLM=vertex, ORGMIND_RAG_PROVIDER=vertex.
+Run a FRESHLY STARTED server with ORGMIND_STORE=memory (never production data), ORGMIND_LLM=vertex,
+ORGMIND_RAG_PROVIDER=vertex, ORGMIND_LIMITS=off (the flow refuses to run on a server with leftover state).
 Uploads one "test-" document per run (purge with `python -m scripts.purge_test_docs --yes`).
 Desktop pass: default route, Viewing-as switcher, chat with each toggle, upload -> Indexing -> Ready, RAG citation,
 learn skills from Dana's BigQuery chat, approve, skill citation, Priya can't see or use it, edit. Phone pass: layout +
@@ -24,6 +25,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--url", default="http://localhost:8092")
 ap.add_argument("--shots", default=tempfile.mkdtemp(prefix="orgmind-user-flow-"))
 ap.add_argument("--index-timeout", type=int, default=900)
+ap.add_argument("--admin-token", default="", help="optional: also screenshot Admin > Guardrails")
 ap.add_argument("--limit-check", action="store_true",
                 help="only check that a 429 renders inline (run the server with ORGMIND_LIMITS=on ORGMIND_LIMIT_CHAT_MESSAGES=1)")
 args = ap.parse_args()
@@ -32,6 +34,9 @@ os.makedirs(SHOTS, exist_ok=True)
 results, errors, created_docs = [], [], []
 CODE = secrets.token_hex(3)
 DOC_NAME = f"test-ui-orion-{CODE}.txt"
+PII_TITLE = f"test-ui-contacts-{CODE}"
+PII_TEXT = ("Laptop help contacts (synthetic): reach Priyanka Rao at priyanka.rao.home@gmail.com or on +91 98450 12345. "
+            "Hardware swaps happen on Fridays.")
 DOC_TEXT = (f"Acme Platform note (synthetic). The Orion-7 nightly export bucket is acme-orion-exports-{CODE}. "
             "Exports run at 02:30 UTC and are kept for 21 days. Ask in #orion-data for access.")
 RAG_Q = "Which bucket does the Orion-7 nightly export go to, and how long are exports kept?"
@@ -131,6 +136,10 @@ with sync_playwright() as p:
     page.wait_for_selector("#agent-cards .agent-card", timeout=120000)
     page.wait_for_selector("#session-list li[data-session]", timeout=30000)
     health = api("/api/health")
+    leftovers = (api("/api/rag/docs?employee_id=e_dana") if health["rag"] != "off" else []) + api("/api/skills?employee_id=e_dana")
+    if leftovers or api("/api/playbooks"):
+        sys.exit("user_flow needs a freshly started server (memory store): this one has docs/skills/playbooks from a "
+                 "previous run. Restart it and run again.")
     step("default route is the User workspace", page.url.endswith("#/user") and page.is_visible("#page-user-home")
          and not page.is_visible("#subnav"), page.url)
     step("defaults to Dana Kim + Dev Agent, toggles off",
@@ -194,6 +203,14 @@ with sync_playwright() as p:
     item = page.locator(".doc-item", has_text=DOC_NAME[:-4])
     item.wait_for(timeout=60000)
     created_docs.append(DOC_NAME)
+    page.click("#doc-add-btn")
+    page.click("[data-docmode=text]")
+    page.fill("#doc-title", PII_TITLE)
+    page.fill("#doc-text", PII_TEXT)
+    page.click("#doc-submit")
+    pii_item = page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)")
+    pii_item.wait_for(timeout=60000)
+    created_docs.append(PII_TITLE + ".txt (pasted)")
     st = item.locator(".st").text_content()
     page.wait_for_timeout(2500)
     st2 = item.locator(".st").text_content()
@@ -203,7 +220,8 @@ with sync_playwright() as p:
     item.locator(".st.ready, .st.failed").wait_for(timeout=args.index_timeout * 1000)
     ready_s = time.time() - t0
     step("document reaches Ready (auto-poll, real Vertex)", item.locator(".st.ready").count() == 1, f"{ready_s:.0f}s")
-    step("profile counts my documents", page.text_content("#stat-docs") == "1")
+    pii_item.locator(".st.ready, .st.failed").wait_for(timeout=args.index_timeout * 1000)
+    step("profile counts my documents", page.text_content("#stat-docs") == "2")
     shot(page, "d05_doc_ready")
 
     # RAG question
@@ -268,6 +286,91 @@ with sync_playwright() as p:
     page.click(".skill-card.editing [data-skill-act=save]")
     page.wait_for_selector(".skill-card:has(.st.active) >> text=v2")
     step("edit skill: saved, version bumped", True)
+
+    # ---- share to org (guardrail) ----
+    def share_result(btn):
+        btn.click()
+        page.wait_for_selector("#modal:not(.hidden) .share-result", timeout=120000)
+        return page.get_attribute(".share-result", "data-verdict"), page.text_content("#modal-body")
+
+    doc_item = page.locator(".doc-item", has_text=DOC_NAME[:-4])
+    verdict, text = share_result(doc_item.locator("[data-share-act=share]"))
+    step("share clean doc: 'Shared with your org'", verdict == "clean" and "Shared with your org" in text, verdict)
+    shot(page, "d10_share_doc_clean", full=False)
+    close_modal(page)
+    page.wait_for_selector(f".doc-item:has-text('{DOC_NAME[:-4]}') .scope.org")
+    step("doc shows 'Shared with org' chip and Unshare", doc_item.locator("[data-share-act=unshare]").count() == 1)
+    card = page.locator(".skill-card:has(.st.active)").first
+    verdict, text = share_result(card.locator("[data-share-act=share]"))
+    step("share active skill: clean", verdict == "clean", text[:80])
+    close_modal(page)
+
+    pii = page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)")
+    verdict, text = share_result(pii.locator("[data-share-act=share]"))
+    step("share doc with email + phone: Blocked, masked previews only",
+         verdict == "blocked" and "EMAIL" in text and "PHONE" in text and "priyanka.rao.home" not in text
+         and "98450" not in text and "p***@g***.com" in text, text[:160].replace("\n", " "))
+    shot(page, "d11_share_blocked", full=False)
+    page.click("#modal-body [data-share-act=redacted]")
+    page.wait_for_selector(".share-result[data-verdict=clean]", timeout=120000)
+    step("'Share a redacted copy' publishes a new doc (original stays private)",
+         "redacted" in page.text_content("#modal-body") and pii.locator(".scope.org").count() == 0)
+    created_docs.append(f"{PII_TITLE} (redacted) - created by the share-redacted flow")
+    shot(page, "d12_redacted_copy", full=False)
+    close_modal(page)
+
+    card = page.locator(".skill-card:has(.st.active)").first
+    card.locator("[data-skill-act=edit]").click()
+    page.fill(".skill-card.editing .ed-name", "Query BigQuery from the CLI")
+    page.click(".skill-card.editing [data-skill-act=save]")
+    page.wait_for_selector(".toast:not(.hidden)")
+    toast_text = page.text_content("#toast")
+    card = page.locator(".skill-card:has(.st.active)").first
+    step("editing a shared skill makes it private again (and says so)",
+         "private again" in toast_text and card.locator(".scope.org").count() == 0, toast_text)
+    verdict, _ = share_result(card.locator("[data-share-act=share]"))
+    close_modal(page)
+    step("re-share after edit: re-scanned clean", verdict == "clean")
+    skill_name = page.locator(".skill-card:has(.st.active) .sk-name").first.text_content()
+
+    # ---- Priya sees and cites Dana's shared items ----
+    switch(page, "e_priya")
+    shared = page.text_content("#shared-list")
+    step("Priya: 'Shared by colleagues' lists Dana's doc and skill with attribution",
+         DOC_NAME[:-4] in shared and skill_name in shared and "Shared by Dana Kim" in shared
+         and PII_TITLE not in shared.replace(PII_TITLE + " (redacted)", ""), shared[:160])
+    shot(page, "d13_priya_shared_list")
+    new_chat(page)
+    m = ask(page, SKILL_Q, {"use-skills"})
+    step("Priya (Skills on): cites Dana's shared skill", m.locator(".chip.cite.sk").count() == 1, m.text_content()[:120].replace("\n", " "))
+    m.locator(".chip.cite.sk").first.click()
+    page.wait_for_selector("#modal-body h2")
+    step("skill drawer shows 'Shared by Dana Kim'", "Shared by Dana Kim" in page.text_content("#modal-body"))
+    shot(page, "d14_priya_skill_attribution", full=False)
+    close_modal(page)
+    m = ask(page, RAG_Q, {"use-rag"})
+    step("Priya (Documents on): cites Dana's shared doc", m.locator(".chip.cite.doc").count() == 1
+         and f"acme-orion-exports-{CODE}" in m.text_content(), m.text_content()[:120].replace("\n", " "))
+    m.locator(".chip.cite.doc").first.click()
+    page.wait_for_selector("#modal-body h2")
+    step("doc drawer shows 'Shared by Dana Kim' (read-only)", "Shared by Dana Kim" in page.text_content("#modal-body"))
+    close_modal(page)
+    step("Priya has no share/edit controls on colleagues' items",
+         page.locator("#shared-list [data-share-act], #shared-list [data-skill-act]").count() == 0)
+    switch(page, "e_dana")
+
+    if args.admin_token:
+        page.evaluate(f"localStorage.setItem('orgmind_admin_token', {json.dumps(args.admin_token)})")
+        page.evaluate("location.hash = '#/admin/guardrails'")
+        page.wait_for_selector("#guardrail-view table", timeout=30000)
+        g = page.text_content("#guardrail-view")
+        step("Admin > Guardrails: counts + events with categories only",
+             "blocked" in g and "EMAIL" in g and "priyanka" not in g.lower(), g[:120].replace("\n", " "))
+        shot(page, "d15_admin_guardrails")
+        page.evaluate("localStorage.removeItem('orgmind_admin_token')")
+        page.evaluate("location.hash = '#/user'")
+        page.wait_for_selector("#page-user-home:not([hidden])")
+
     step("desktop: no horizontal overflow", overflow(page) <= 0, f"{overflow(page)}px")
     page.close()
 
@@ -293,6 +396,23 @@ with sync_playwright() as p:
          page.is_visible("#doc-list") and DOC_NAME[:-4] in page.text_content("#doc-list")
          and page.locator(".skill-card .st.active").count() >= 1)
     shot(page, "p03_knowledge")
+    card = page.locator(".skill-card:has(.st.active)").first
+    card.locator("[data-share-act=unshare]").click()
+    page.wait_for_selector(".skill-card:has(.st.active) [data-share-act=share]")
+    page.locator(".skill-card:has(.st.active) [data-share-act=share]").first.click()
+    page.wait_for_selector("#modal:not(.hidden) .share-result", timeout=120000)
+    step("phone: unshare then share skill -> 'Shared with your org'",
+         page.get_attribute(".share-result", "data-verdict") == "clean")
+    shot(page, "p04_share_clean", full=False)
+    close_modal(page)
+    page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)").locator("[data-share-act=share]").click()
+    page.wait_for_selector("#modal:not(.hidden) .share-result", timeout=120000)
+    txt = page.text_content("#modal-body")
+    step("phone: blocked dialog with masked findings and redacted-copy button",
+         page.get_attribute(".share-result", "data-verdict") == "blocked" and "priyanka.rao.home" not in txt
+         and page.locator("#modal-body [data-share-act=redacted]").count() == 1)
+    shot(page, "p05_share_blocked", full=False)
+    close_modal(page)
     step("phone: no horizontal overflow", overflow(page) <= 0, f"{overflow(page)}px")
     page.close()
     b.close()

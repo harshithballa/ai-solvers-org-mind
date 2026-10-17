@@ -484,13 +484,21 @@ async function loadDocs() {
     if (d.status === "failed") return `<span class="st failed" title="${escapeHtml(d.error || "")}">Failed</span>`;
     return `<span class="st indexing">Indexing · <span class="elapsed" data-since="${d.created_at}">0:00</span></span>`;
   };
+  const docActions = (d) => {
+    if (d.scope === "org") return `<button class="btn ghost-light small" data-share-act="unshare" data-kind="doc" data-id="${d.id}">Unshare</button>`;
+    if (d.status !== "ready") return "";
+    if (d.mime_type === "application/pdf") return `<span class="muted small" title="PDFs can't be scanned yet">PDF: can't be shared yet</span>`;
+    return `<button class="btn ghost-light small" data-share-act="share" data-kind="doc" data-id="${d.id}">Share</button>`;
+  };
   $("#doc-list").innerHTML = mine.length ? mine.map((d) => `
     <li data-doc="${d.id}" class="doc-item">
       <span class="doc-icon ${d.mime_type === "application/pdf" ? "pdf" : ""}" aria-hidden="true">▤</span>
       <span class="doc-main"><span class="doc-title">${escapeHtml(d.title)}</span>
-        <span class="muted small">Private · ${(d.size / 1024).toFixed(1)} KB · ${fmtDate(d.created_at)}</span></span>
+        <span class="muted small">${(d.size / 1024).toFixed(1)} KB · ${fmtDate(d.created_at)}</span>
+        <span class="row doc-actions">${scopeChip(d)}${docActions(d)}</span></span>
       ${chip(d)}</li>`).join("")
     : `<li class="muted small empty">No documents yet.</li>`;
+  renderShared();
   tickElapsed();
   renderProfile();
   clearTimeout(state.docPoll);
@@ -564,7 +572,72 @@ async function loadSkills() {
   $("#skill-count").textContent = mine.length;
   $("#skill-list").innerHTML = mine.length ? mine.map(skillCard).join("")
     : `<li class="muted small empty">No skills yet. Learn skills from a chat.</li>`;
+  renderShared();
   renderProfile();
+}
+
+function scopeChip(item) {
+  return item.scope === "org" ? `<span class="scope org">Shared with org</span>` : `<span class="scope">Private</span>`;
+}
+
+// Read-only list of what colleagues shared with the org (docs + active skills).
+function renderShared() {
+  const docs = state.docs.filter((d) => d.scope === "org" && d.owner_employee_id !== empId());
+  const sks = state.skills.filter((s) => s.scope === "org" && s.owner_employee_id !== empId());
+  $("#shared-count").textContent = docs.length + sks.length;
+  const by = (x) => `<span class="muted small">Shared by ${escapeHtml(x.shared_by_name || state.employees[x.owner_employee_id]?.name || "a colleague")}</span>`;
+  $("#shared-list").innerHTML = (docs.length || sks.length) ? [
+    ...sks.map((s) => `<li class="shared-item" data-skill-view="${s.id}"><span class="si-kind sk">Skill</span>
+      <span class="doc-main"><span class="doc-title">${escapeHtml(s.name)}</span>${by(s)}</span><span class="scope org">Read-only</span></li>`),
+    ...docs.map((d) => `<li class="shared-item" data-doc="${d.id}"><span class="si-kind doc">Doc</span>
+      <span class="doc-main"><span class="doc-title">${escapeHtml(d.title)}</span>${by(d)}</span>
+      ${d.status === "ready" ? `<span class="scope org">Read-only</span>` : `<span class="st indexing">Indexing</span>`}</li>`),
+  ].join("") : `<li class="muted small empty">Nothing shared by colleagues yet.</li>`;
+}
+
+async function shareAction(btn) {
+  const act = btn.dataset.shareAct, kind = btn.dataset.kind, id = btn.dataset.id;
+  const base = kind === "doc" ? `/api/rag/docs/${id}` : `/api/skills/${id}`;
+  if (act === "unshare") {
+    try {
+      btn.disabled = true;
+      await api(`${base}/unshare`, { method: "POST", body: { employee_id: empId() } });
+      toast("Unshared: it's private again");
+    } catch (e) { toast(friendly(e), true); }
+    return kind === "doc" ? loadDocs() : loadSkills();
+  }
+  const label = btn.textContent;
+  setBusy(btn, true, act === "redacted" ? "Redacting…" : "Scanning…");
+  try {
+    const res = await api(act === "redacted" ? `${base}/share-redacted` : `${base}/share`, { method: "POST", body: { employee_id: empId() } });
+    showShareResult(kind, id, res, act === "redacted");
+  } catch (e) {
+    showShareResult(kind, id, { verdict: "refused", message: friendly(e), findings: [] }, act === "redacted");
+  } finally {
+    if (document.body.contains(btn)) setBusy(btn, false, label);
+    await (kind === "doc" ? loadDocs() : loadSkills());
+  }
+}
+
+function showShareResult(kind, id, res, redacted) {
+  const findings = res.findings || [];
+  const list = findings.length ? `<ul class="findings">${findings.map((f) => `<li><span class="cat">${escapeHtml(f.category.replace(/_/g, " "))}</span>
+      <code>${escapeHtml(f.preview)}</code> <span class="muted small">${escapeHtml(f.reason || "")}</span></li>`).join("")}</ul>` : "";
+  const note = `<p class="muted small">Checked automatically for personal data and secrets (patterns + a Gemini check). There is no human review yet.</p>`;
+  let html;
+  if (res.verdict === "clean" && redacted) {
+    html = `<h2 class="share-ok">Shared a redacted copy</h2><p>“${escapeHtml(res.doc?.title || "")}” replaces every finding with [REDACTED]. It is indexing now; colleagues will see it once it is Ready. The original stays private.</p>${note}`;
+  } else if (res.verdict === "clean") {
+    html = `<h2 class="share-ok">Shared with your org</h2><p>Colleagues can now find and cite it, read-only, marked “Shared by ${escapeHtml(state.employees[empId()]?.name || "you")}”. You can unshare it at any time.</p>${note}`;
+  } else if (res.verdict === "blocked") {
+    html = `<h2 class="share-blocked">Blocked: not shared</h2><p>${redacted ? "The redacted copy still contains:" : "It stays private because the scan found:"}</p>${list}
+      ${kind === "doc" && !redacted ? `<div class="row"><button class="btn primary small" data-share-act="redacted" data-kind="doc" data-id="${id}">Share a redacted copy</button></div>` : ""}
+      ${kind === "skill" ? `<p class="small">Edit the skill to remove these values (use a parameter such as {project_id}), then share again.</p>` : ""}${note}`;
+  } else {
+    html = `<h2 class="share-blocked">${res.verdict === "error" ? "Couldn't verify" : "Not shared"}</h2><p>${escapeHtml(res.message || "Please try again.")}</p>${list}${note}`;
+  }
+  $("#modal-body").innerHTML = `<div class="share-result" data-verdict="${escapeHtml(res.verdict)}">${html}</div>`;
+  $("#modal").classList.remove("hidden");
 }
 
 function skillCard(s) {
@@ -582,7 +655,7 @@ function skillCard(s) {
     : escapeHtml(s.trigger);
   const n = s.evidence.length;
   return `<li class="skill-card" data-skill-card="${s.id}">
-    <div class="row between"><b class="sk-name">${escapeHtml(s.name)}</b><span class="st ${s.status}">${s.status[0].toUpperCase() + s.status.slice(1)}</span></div>
+    <div class="row between"><b class="sk-name">${escapeHtml(s.name)}</b><span class="row">${scopeChip(s)}<span class="st ${s.status}">${s.status[0].toUpperCase() + s.status.slice(1)}</span></span></div>
     <p class="sk-desc">${escapeHtml(s.description)}</p>
     <p class="small"><span class="muted">When to use:</span> ${trig}</p>
     <ol class="sk-steps">${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
@@ -592,6 +665,8 @@ function skillCard(s) {
       ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="edit" data-id="${s.id}">Edit</button>` : ""}
       ${s.status === "draft" ? `<button class="btn primary small" data-skill-act="approve" data-id="${s.id}">Approve</button>` : ""}
       ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="archive" data-id="${s.id}">Archive</button>` : ""}
+      ${s.status === "active" && s.scope !== "org" ? `<button class="btn ghost-light small" data-share-act="share" data-kind="skill" data-id="${s.id}">Share</button>` : ""}
+      ${s.scope === "org" ? `<button class="btn ghost-light small" data-share-act="unshare" data-kind="skill" data-id="${s.id}">Unshare</button>` : ""}
     </div></li>`;
 }
 
@@ -609,10 +684,10 @@ async function skillAction(btn) {
     btn.disabled = true;
     if (act === "save") {
       const steps = card.querySelector(".ed-steps").value.split("\n").map((x) => x.trim()).filter(Boolean);
-      await api(`/api/skills/${id}`, { method: "PATCH", body: { employee_id: empId(), name: card.querySelector(".ed-name").value.trim(),
+      const res = await api(`/api/skills/${id}`, { method: "PATCH", body: { employee_id: empId(), name: card.querySelector(".ed-name").value.trim(),
         description: card.querySelector(".ed-desc").value.trim(), steps } });
       state.editingSkill = null;
-      toast("Skill saved");
+      toast(res.unshared ? res.message : "Skill saved");
     } else {
       await api(`/api/skills/${id}/${act}`, { method: "POST", body: { employee_id: empId() } });
       toast(act === "approve" ? "Skill approved: the agent can use it when Skills is on" : "Skill archived");
@@ -636,7 +711,8 @@ function openSkill(id) {
     <p><strong>When to use:</strong> ${escapeHtml(s.trigger)}</p>
     <p><strong>Steps:</strong></p><ol>${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
     ${s.parameters.length ? `<p><strong>Asks you for:</strong></p><ul>${s.parameters.map((p) => `<li><code>${escapeHtml(p.name)}</code>: ${escapeHtml(p.description)}</li>`).join("")}</ul>` : ""}
-    <p class="muted small">Learned from one of ${escapeHtml(state.employees[s.owner_employee_id]?.name || "")}'s chats, based on ${s.evidence.length} messages. Private to its owner.</p>`;
+    <p class="muted small">Learned from one of ${escapeHtml(state.employees[s.owner_employee_id]?.name || "")}'s chats, based on ${s.evidence.length} messages.
+      ${s.scope === "org" ? `<b>Shared by ${escapeHtml(s.shared_by_name || state.employees[s.owner_employee_id]?.name || "")}</b> with the org (read-only for colleagues).` : "Private to its owner."}</p>`;
 }
 
 function openDoc(id) {
@@ -646,6 +722,7 @@ function openDoc(id) {
   const snippet = state.docSnippets[id];
   $("#modal-body").innerHTML = `
     <span class="tag doc">document</span><span class="tag">${escapeHtml(d.status)}</span><span class="tag">${d.scope === "org" ? "Shared with org" : "Private"}</span>
+    ${d.scope === "org" ? `<p class="small"><b>Shared by ${escapeHtml(d.shared_by_name || state.employees[d.owner_employee_id]?.name || "")}</b>${d.owner_employee_id !== empId() ? " (read-only)" : ""}</p>` : ""}
     <h2>${escapeHtml(d.title)}</h2>
     <p class="muted small">${escapeHtml(d.mime_type)} · ${(d.size / 1024).toFixed(1)} KB · uploaded ${fmtDate(d.created_at)} by ${escapeHtml(state.employees[d.owner_employee_id]?.name || d.owner_employee_id)}</p>
     ${snippet ? `<p><strong>Excerpt the agent used:</strong></p><blockquote class="excerpt-quote">${escapeHtml(snippet)}</blockquote>`
@@ -679,7 +756,7 @@ function renderRagToggle() {
   const on = ragOn();
   $("#use-rag").disabled = !on;
   $("#rag-toggle").classList.toggle("disabled", !on);
-  $("#rag-help").textContent = on ? "Answer only from my uploaded documents" : "Turned off on this server";
+  $("#rag-help").textContent = on ? "Answer only from documents you can see (yours and shared)" : "Turned off on this server";
 }
 
 // ---------------- reset (admin) ----------------
@@ -793,6 +870,40 @@ async function loadUsage() {
   }
 }
 
+// ---------------- guardrails (admin) ----------------
+
+async function loadGuardrails() {
+  const box = $("#guardrail-view");
+  if (!getToken()) {
+    box.innerHTML = `<div class="row"><span class="muted small">Guardrail activity needs the admin token.</span>
+      <input type="password" id="gr-token" placeholder="Admin token"><button class="btn ghost-light small" id="gr-go">Show</button></div>`;
+    $("#gr-go").onclick = () => { saveToken($("#gr-token").value); loadGuardrails(); };
+    return;
+  }
+  try {
+    const g = await api("/api/guardrail/summary");
+    const c = g.counts;
+    box.innerHTML = `
+      <div class="report"><div class="stats"><span class="outcome created">${c.clean} shared clean</span>
+        <span class="share-blocked">${c.blocked} blocked</span><span>${c.couldnt_verify} couldn't verify</span>
+        <span class="muted">${c.unshared} unshared</span><span class="muted">human review: ${escapeHtml(g.human_review)}</span></div></div>
+      <h3>Detectors</h3>
+      <div class="table-wrap"><table class="table compact"><thead><tr><th>Layer</th><th>Detects</th><th>Category</th></tr></thead><tbody>
+        ${g.detectors.map((d) => `<tr><td>${d.layer === "llm" ? "Gemini" : "Pattern"}</td><td>${escapeHtml(d.label)}</td><td><code>${escapeHtml(d.category)}</code></td></tr>`).join("")}
+      </tbody></table></div>
+      <h3>Last ${g.events.length} share events</h3>
+      <div class="table-wrap"><table class="table compact"><thead><tr><th>When</th><th>Who</th><th>Item</th><th>Action</th><th>Verdict</th><th>Finding categories</th></tr></thead><tbody>
+        ${g.events.length ? g.events.map((e) => `<tr><td>${timeAgo(e.created_at)}</td><td>${escapeHtml(e.actor || "")}</td>
+          <td>${escapeHtml(e.item_type)}</td><td>${escapeHtml(e.action)}</td><td>${escapeHtml(e.verdict)}</td>
+          <td>${e.finding_categories.map((x) => `<code>${escapeHtml(x)}</code>`).join(" ") || "–"}</td></tr>`).join("")
+          : `<tr><td colspan="6" class="empty">No share attempts yet.</td></tr>`}
+      </tbody></table></div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted small">${e.status === 401 ? "Admin token not accepted." : escapeHtml(e.message)}</p>`;
+    if (e.status === 401) saveToken("");
+  }
+}
+
 // ---------------- routing ----------------
 
 const ADMIN_TABS = [
@@ -802,7 +913,7 @@ const ADMIN_TABS = [
   { id: "users", label: "Users & Teams", preview: true },
   { id: "mcps", label: "MCPs", preview: true },
   { id: "skills", label: "Skills & Sub-agents", preview: true },
-  { id: "guardrails", label: "Guardrails", preview: true },
+  { id: "guardrails", label: "Guardrails" },
   { id: "roadmap", label: "Roadmap" },
 ];
 const DEFAULT_ROUTE = "#/user";
@@ -835,6 +946,7 @@ function route() {
     loadTraces($("#traces-view"), false);
     loadUsage();
   }
+  if (key === "admin-guardrails") loadGuardrails();
 }
 
 // ---------------- collapsible side panels ----------------
@@ -858,6 +970,10 @@ function initPanels() {
 // ---------------- wiring ----------------
 
 document.addEventListener("click", (e) => {
+  const share = e.target.closest("[data-share-act]");
+  if (share) { e.preventDefault(); e.stopPropagation(); return shareAction(share); }
+  const skv = e.target.closest("[data-skill-view]");
+  if (skv) return openSkill(skv.dataset.skillView);
   const pb = e.target.closest("[data-playbook]");
   if (pb) return openPlaybook(pb.dataset.playbook);
   const sk = e.target.closest(".chip[data-skill]");
@@ -881,6 +997,7 @@ $("#trace-btn").addEventListener("click", openDrawer);
 $("#drawer-close").addEventListener("click", () => { $("#trace-drawer").hidden = true; });
 $("#drawer-all").addEventListener("click", () => { $("#trace-drawer").hidden = true; });
 $("#traces-refresh").addEventListener("click", () => loadTraces($("#traces-view"), false));
+$("#guardrail-refresh").addEventListener("click", loadGuardrails);
 $("#compare-btn").addEventListener("click", runCompare);
 $("#compare-question").addEventListener("keydown", (e) => { if (e.key === "Enter") runCompare(); });
 $("#compare-agent").addEventListener("change", renderPresets);
