@@ -39,7 +39,7 @@ def cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))  # vectors are stored normalized
 
 
-OPERATIONS = {"AnswerOut": "answer", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
+OPERATIONS = {"AnswerOut": "answer", "AnswerWithDocsOut": "answer", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
 
 
 def _operation(schema) -> str:

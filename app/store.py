@@ -8,7 +8,7 @@ from typing import Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, Session
+from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, RagDoc, Session
 from app.tracing import span
 
 T = TypeVar("T", bound=BaseModel)
@@ -19,7 +19,11 @@ COLLECTIONS: dict[type[BaseModel], str] = {
     Agent: "agents",
     Session: "sessions",
     Playbook: "playbooks",
+    RagDoc: "rag_docs",
 }
+# Demo reset wipes these. rag_docs survives: its rows own real GCS objects / index documents, and
+# losing them would orphan those documents (search hits would then be dropped as unowned).
+RESET_COLLECTIONS = [c for c in COLLECTIONS.values() if c != "rag_docs"]
 
 
 class Store(Protocol):
@@ -42,7 +46,9 @@ class MemoryStore:
 
     def reset(self) -> None:
         with self._lock:
+            kept = getattr(self, "_data", {}).get("rag_docs", {})
             self._data: dict[str, dict[str, dict]] = {c: {} for c in COLLECTIONS.values()}
+            self._data["rag_docs"] = kept
             self._messages: dict[str, list[dict]] = {}
 
     def put(self, obj: BaseModel) -> None:
@@ -115,7 +121,7 @@ class FirestoreStore:
         return sorted(rows, key=lambda m: m.created_at)
 
     def reset(self) -> None:
-        for name in COLLECTIONS.values():
+        for name in RESET_COLLECTIONS:
             self._db.recursive_delete(self._db.collection(name))  # includes sessions/*/messages
 
     def is_empty(self) -> bool:

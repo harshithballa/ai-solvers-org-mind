@@ -72,6 +72,7 @@ class Message(BaseModel):
     content: str
     created_at: datetime = Field(default_factory=now)
     cited_playbook_ids: list[str] = []
+    cited_doc_ids: list[str] = []
 
 
 class Playbook(BaseModel):
@@ -90,6 +91,27 @@ class Playbook(BaseModel):
     updated_at: datetime = Field(default_factory=now)
     embedding: list[float] = []          # retrieval (RETRIEVAL_DOCUMENT)
     centroid: list[float] = []           # mean of source summary embeddings, for cluster matching
+
+
+RagScope = Literal["private", "org"]
+RagStatus = Literal["uploading", "indexing", "ready", "failed"]
+
+
+class RagDoc(BaseModel):
+    """An uploaded document. Ownership and scope live here, never in the search index."""
+    id: str = Field(default_factory=lambda: new_id("doc"))
+    org_id: str
+    owner_employee_id: str
+    title: str
+    scope: RagScope = "private"
+    gcs_uri: str = ""                    # provider URI (gs://... for Vertex); search hits map back via this
+    mime_type: str
+    size: int
+    status: RagStatus = "uploading"
+    import_operation: str = ""
+    error: str | None = None
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
 
 
 class LLMCall(BaseModel):
@@ -131,3 +153,10 @@ class PlaybookOut(BaseModel):
 class AnswerOut(BaseModel):
     answer: str = Field(description="The reply to the employee, in Markdown.")
     used_playbook_ids: list[str] = Field(description="IDs of the provided playbooks actually used in the answer. Empty if none.")
+
+
+class AnswerWithDocsOut(BaseModel):
+    """Used only when the request asked for document RAG, so the playbook-only schema stays unchanged."""
+    answer: str = Field(description="The reply to the employee, in Markdown.")
+    used_playbook_ids: list[str] = Field(description="IDs of the provided playbooks actually used in the answer. Empty if none.")
+    used_doc_ids: list[str] = Field(description="IDs of the provided document excerpts actually used in the answer. Empty if none.")

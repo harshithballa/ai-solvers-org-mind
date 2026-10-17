@@ -19,6 +19,12 @@ class Settings:
     admin_token: str
     tracing: str
     trace_cap: int
+    rag_provider: str = "off"
+    rag_datastore: str = ""
+    rag_bucket: str = ""
+    rag_location: str = "global"
+    rag_min_score: float = 0.5
+    rag_top_k: int = 3
     org_id: str = "acme"
 
 
@@ -40,4 +46,10 @@ def get_settings() -> Settings:
         admin_token=os.getenv("ORGMIND_ADMIN_TOKEN", ""),
         tracing=os.getenv("ORGMIND_TRACING", "off"),
         trace_cap=int(os.getenv("ORGMIND_TRACE_CAP", "500")),
+        rag_provider=os.getenv("ORGMIND_RAG_PROVIDER", "off"),
+        rag_datastore=os.getenv("ORGMIND_RAG_DATASTORE", ""),
+        rag_bucket=os.getenv("ORGMIND_RAG_BUCKET", ""),
+        rag_location=os.getenv("ORGMIND_RAG_LOCATION", "global"),
+        rag_min_score=float(os.getenv("ORGMIND_RAG_MIN_SCORE", "0.5")),
+        rag_top_k=int(os.getenv("ORGMIND_RAG_TOP_K", "3")),
     )

@@ -112,6 +112,11 @@ playbooks in parallel → **match** existing playbooks (update and bump the vers
 | `ORGMIND_RETRIEVAL_THRESHOLD` | `0.62` | Similarity needed to offer a playbook to the agent |
 | `ORGMIND_TRACING` | `off` | `cloudtrace` exports OpenTelemetry spans to Cloud Trace (via OTLP); `off` locally and in tests |
 | `ORGMIND_TRACE_CAP` | `500` | Max recorded LLM calls kept for the in-app Traces view |
+| `ORGMIND_RAG_PROVIDER` | `off` | Document RAG: `vertex` (GCS + Vertex AI Search), `fake` (in-memory keyword overlap, tests) or `off` (app behaves exactly as without RAG) |
+| `ORGMIND_RAG_DATASTORE` | (none) | Discovery Engine data store ID (unstructured, `default_collection`, `default_search` serving config) |
+| `ORGMIND_RAG_BUCKET` | (none) | GCS bucket for uploaded documents (`private/{employee_id}/{doc_id}-{filename}`) |
+| `ORGMIND_RAG_LOCATION` | `global` | Data store location |
+| `ORGMIND_RAG_MIN_SCORE` | `0.5` | Search hits under this `semanticRelevanceScore` count as "not covered" |
 | `ORGMIND_ADMIN_TOKEN` | (none) | Required `X-Admin-Token` for `POST /api/demo/reset`. Reset is **disabled** when unset. On Cloud Run it comes from Secret Manager |
 
 ## Run locally
@@ -138,6 +143,30 @@ GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.firestore_persistence
 ORGMIND_ADMIN_TOKEN=<token> .venv/bin/python scripts/demo_flow.py --url <url>     # headless browser demo flow
 .venv/bin/python scripts/ui_tabs_check.py --url <url>    # every tab at desktop + phone width, preview rules
 ```
+
+## Document RAG (Phase 1, `rag-skills` branch)
+
+Employees upload their own documents and agents answer grounded in them, with citations.
+
+- **Upload** `POST /api/rag/docs`: multipart (`employee_id`, `file`, optional `title`; `.txt` `.md` `.pdf`, max 5 MB)
+  or JSON `{employee_id, title, text}` (saved as `.txt`). The file goes to GCS under
+  `private/{employee_id}/{doc_id}-{filename}`, and a Discovery Engine import starts (`data_schema=content`,
+  `INCREMENTAL`). The response has `status=indexing`.
+- **List** `GET /api/rag/docs?employee_id=`: the employee's own docs plus `scope=org` docs. Docs still indexing are
+  checked against their import operation on read (no background workers).
+- **Search** `POST /api/rag/search {employee_id, query}`: Vertex AI Search (10 results, extractive segments +
+  snippets), each hit mapped back to `rag_docs` by its GCS URI. Unmapped hits, hits the employee may not see, and hits
+  under `ORGMIND_RAG_MIN_SCORE` are dropped; the top 3 are returned.
+- **Chat** `POST /api/sessions/{id}/messages` with `use_rag: true`: excerpts are injected after playbooks as
+  "Document excerpts", the model answers only from playbooks and excerpts (saying so when they don't cover the
+  question), and `cited_doc_ids` is stored on the message. A RAG failure never fails the chat: the answer is generated
+  without documents and `rag.error` explains why.
+- **Ownership lives in our store** (`rag_docs`), never in the search index. `rag_docs` survives *Reset demo*,
+  because its rows own real GCS objects and index documents.
+- Spans: `rag.upload`, `rag.import`, `rag.import.status`, `rag.search` (result count, latency, scope-drop count).
+- Smoke test against the real data store: `python -m scripts.rag_smoke [--gemini]`.
+- To enable on Cloud Run (not done yet), the runtime service account additionally needs `roles/discoveryengine.editor`
+  on the project and `roles/storage.objectAdmin` on the bucket.
 
 ## Seed and reset
 

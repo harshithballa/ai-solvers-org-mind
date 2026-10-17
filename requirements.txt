@@ -7,3 +7,6 @@ opentelemetry-api==1.45.1
 opentelemetry-sdk==1.45.1
 opentelemetry-exporter-otlp-proto-grpc==1.45.1
 opentelemetry-propagator-gcp==1.15.0
+google-cloud-discoveryengine==0.20.5
+google-cloud-storage==3.17.1
+python-multipart==0.0.32

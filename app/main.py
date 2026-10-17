@@ -14,7 +14,9 @@ from app.agent import AnswerResult, answer
 from app.config import get_settings
 from app.distiller import DistillReport, distill
 from app.llm import get_llm
-from app.models import Agent, Employee, Message, Org, Playbook, Session, now
+from app.models import Agent, Employee, Message, Org, Playbook, RagDoc, Session, now
+from app import rag_docs
+from app.rag import get_rag_provider
 from app.seed import ORG_ID, seed
 from app.store import get_store
 from app import tracing
@@ -35,7 +37,10 @@ app = FastAPI(title="OrgMind", lifespan=lifespan)
 # One trace per chat / distill / compare request.
 TRACED = [("POST", re.compile(r"^/api/sessions/[^/]+/messages$"), "chat"),
           ("POST", re.compile(r"^/api/distill$"), "distill"),
-          ("POST", re.compile(r"^/api/compare$"), "compare")]
+          ("POST", re.compile(r"^/api/compare$"), "compare"),
+          ("POST", re.compile(r"^/api/rag/docs$"), "rag_upload"),
+          ("GET", re.compile(r"^/api/rag/docs$"), "rag_docs"),
+          ("POST", re.compile(r"^/api/rag/search$"), "rag_search")]
 
 
 @app.middleware("http")
@@ -67,7 +72,15 @@ def _result_payload(r: AnswerResult) -> dict:
         "answer": r.answer,
         "cited": [{"id": p.id, "title": p.title, "version": p.version} for p in r.cited],
         "retrieved": [{"id": p.id, "title": p.title, "score": round(sc, 3)} for p, sc in r.retrieved],
+        "cited_docs": [{"id": h.doc.id, "title": h.doc.title} for h in r.cited_docs],
+        "rag": {"used": r.rag_used, "error": r.rag_error,
+                "retrieved": [_hit_payload(h) for h in r.retrieved_docs]},
     }
+
+
+def _hit_payload(h: rag_docs.DocHit) -> dict:
+    return {"doc_id": h.doc.id, "title": h.doc.title, "snippet": h.snippet,
+            "score": None if h.score is None else round(h.score, 3), "source": h.source}
 
 
 # ---------- org / demo ----------
@@ -75,7 +88,7 @@ def _result_payload(r: AnswerResult) -> dict:
 @app.get("/api/health")
 def health():
     s = get_settings()
-    return {"ok": True, "store": s.store, "llm": get_llm().mode, "chat_model": s.chat_model,
+    return {"ok": True, "store": s.store, "llm": get_llm().mode, "chat_model": s.chat_model, "rag": s.rag_provider,
             "cluster_threshold": s.cluster_threshold, "retrieval_threshold": s.retrieval_threshold,
             "tracing": s.tracing, "project": s.project or None}
 
@@ -111,6 +124,7 @@ class NewSession(BaseModel):
 class NewMessage(BaseModel):
     content: str
     use_playbooks: bool = True
+    use_rag: bool = False
 
 
 @app.get("/api/sessions")
@@ -146,10 +160,12 @@ def post_message(session_id: str, body: NewMessage):
     agent = _get_or_404(Agent, session.agent_id)
     history = store.list_messages(session_id)
 
-    result = answer(agent, history, body.content, use_playbooks=body.use_playbooks)
+    result = answer(agent, history, body.content, use_playbooks=body.use_playbooks,
+                    use_rag=body.use_rag, employee_id=session.employee_id)
     store.add_message(Message(session_id=session_id, role="user", content=body.content))
     reply = Message(session_id=session_id, role="assistant", content=result.answer,
-                    cited_playbook_ids=[p.id for p in result.cited])
+                    cited_playbook_ids=[p.id for p in result.cited],
+                    cited_doc_ids=[h.doc.id for h in result.cited_docs])
     store.add_message(reply)
 
     if not history:
@@ -205,6 +221,74 @@ def compare(body: CompareRequest):
         withpb = pool.submit(tracing.wrap(answer), agent, [], body.question, True)
         return {"question": body.question, "baseline": _result_payload(base.result()),
                 "with_playbooks": _result_payload(withpb.result())}
+
+
+# ---------- document RAG ----------
+
+def _rag_provider_or_503():
+    provider = get_rag_provider()
+    if provider is None:
+        raise HTTPException(503, "document RAG is disabled (ORGMIND_RAG_PROVIDER=off)")
+    return provider
+
+
+class TextDoc(BaseModel):
+    employee_id: str
+    title: str
+    text: str
+
+
+@app.post("/api/rag/docs")
+async def upload_rag_doc(request: Request):
+    """Multipart (employee_id, file, optional title) for .txt/.md/.pdf up to 5 MB, or JSON {employee_id, title, text}."""
+    provider = _rag_provider_or_503()
+    if request.headers.get("content-type", "").startswith("multipart/form-data"):
+        form = await request.form()
+        upload, employee_id = form.get("file"), str(form.get("employee_id") or "")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(400, "multipart upload needs a 'file' field")
+        data = await upload.read(rag_docs.MAX_BYTES + 1)
+        filename = upload.filename or "document"
+        title = str(form.get("title") or "") or filename.rsplit(".", 1)[0]
+    else:
+        try:
+            body = TextDoc.model_validate(await request.json())
+        except Exception as e:
+            raise HTTPException(422, f"expected multipart or JSON {{employee_id, title, text}}: {e}") from None
+        employee_id, title, data = body.employee_id, body.title, body.text.encode("utf-8")
+        filename = f"{rag_docs.safe_filename(body.title)[:60] or 'note'}.txt"
+    _get_or_404(Employee, employee_id)
+    try:
+        doc = await run_in_threadpool(rag_docs.upload, provider, ORG_ID, employee_id, title, filename, data)
+    except rag_docs.UploadError as e:
+        raise HTTPException(400, str(e)) from None
+    if doc.status == "failed":
+        raise HTTPException(502, {"message": "upload or import failed", "doc": doc.model_dump(mode="json")})
+    return doc
+
+
+@app.get("/api/rag/docs")
+def list_rag_docs(employee_id: str) -> list[RagDoc]:
+    provider = _rag_provider_or_503()
+    _get_or_404(Employee, employee_id)
+    return [rag_docs.refresh(provider, d) for d in rag_docs.visible_docs(ORG_ID, employee_id)]
+
+
+class RagSearch(BaseModel):
+    employee_id: str
+    query: str
+
+
+@app.post("/api/rag/search")
+def rag_search(body: RagSearch):
+    provider = _rag_provider_or_503()
+    _get_or_404(Employee, body.employee_id)
+    try:
+        hits, _ = rag_docs.search(provider, ORG_ID, body.employee_id, body.query)
+    except Exception as e:
+        tracing.log.warning("rag search failed: %s", e)
+        raise HTTPException(502, f"search failed: {type(e).__name__}") from None
+    return {"query": body.query, "results": [_hit_payload(h) for h in hits]}
 
 
 @app.get("/api/traces")

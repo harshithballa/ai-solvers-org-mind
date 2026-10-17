@@ -70,3 +70,24 @@ LEAK_RETRY = """Your previous playbook still contained case-specific values: {va
 Rewrite it without them (use placeholders like `<your cost center>` where a value is needed).
 
 {original}"""
+
+
+DOC_CONTEXT = """
+## Document excerpts
+The excerpts below come from documents uploaded to OrgMind that this employee is allowed to see.
+Answer ONLY from these excerpts and the playbooks above (if any). If they don't cover the question, or only
+cover part of it, say so clearly (e.g. "Your documents don't cover …") instead of filling the gap.
+Never invent commands, channels, names, links or policies that are not written in an excerpt or playbook.
+When you use an excerpt, mention its document by title, and put its ID in `used_doc_ids`.
+
+{docs}"""
+
+NO_DOCS_NOTE = """
+## Document excerpts
+No uploaded document matched this question. Answer only from the playbooks above (if any). If they don't
+cover it, say clearly that your documents don't cover this question; never invent commands or Acme specifics.
+Return `used_doc_ids` as an empty list."""
+
+
+def format_docs(hits) -> str:
+    return "\n\n".join(f"### [{h.doc.id}] {h.doc.title}\n{h.snippet}" for h in hits)
