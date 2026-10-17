@@ -10,6 +10,7 @@ Dev Agent with use_rag on (needs Vertex AI Gemini access).
 """
 import argparse
 import os
+import re
 import secrets
 import sys
 import time
@@ -22,6 +23,33 @@ DEFAULTS = {
 }
 OWNER, OTHER = "e_dana", "e_noah"
 UNRELATED = "how do I reset my gym membership"
+# Questions the uploaded docs do NOT answer, but that sit lexically close to them (they pass the score gate).
+NEGATIVE = [
+    "vault token expired on staging deploy",                             # near-miss: freeze doc passes the gate (~0.28)
+    "What is the exception process for the production deploy freeze?",  # near-miss: doc only covers staging
+    "How often should I rotate my laptop SSH keys, and what command do I use?",  # no excerpt; tempts generic commands
+    "Who do I page when the payments API is down in production?",       # no excerpt
+]
+FREEZE_NOTE = ("Acme internal note: the staging deploy freeze window is Thursdays 4pm-6pm IST. "
+               "To request an exception, post in #release-ops with the ticket ID and tag @rohan-release.")
+NOT_COVERED = re.compile(r"(do(es)?n['’]?t|do(es)? not|not) (seem to )?(cover|contain|mention|include|address|have|provide|specify)"
+                         r"|no (information|details|mention)|not covered|isn['’]t covered|aren['’]t covered", re.I)
+CODE = re.compile(r"`([^`]+)`")
+
+
+def check_negative(r: dict, question: str) -> list[str]:
+    """Answer must say the docs don't cover it, and every `code` span must come from an excerpt or the question."""
+    problems = []
+    if not NOT_COVERED.search(r["answer"]):
+        problems.append("does not say the docs don't cover it")
+    grounded = question + " " + " ".join(h["snippet"] for h in r["rag"]["retrieved"])
+    fenced = re.findall(r"```[^\n]*\n(.*?)```", r["answer"], re.S)
+    inline = CODE.findall(re.sub(r"```.*?```", " ", r["answer"], flags=re.S))
+    invented = [c.strip() for c in fenced + inline if c.strip() not in grounded]
+    invented += [ch for ch in re.findall(r"(?<![\w&])#[a-z][\w-]+", r["answer"]) if ch not in grounded]
+    if invented:
+        problems.append(f"invented code/commands: {invented}")
+    return problems
 
 
 def main():
@@ -53,7 +81,7 @@ def main():
 
     with TestClient(app) as client:
         print(f"provider={get_rag_provider().name} datastore={os.environ['ORGMIND_RAG_DATASTORE']} "
-              f"min_score={os.environ.get('ORGMIND_RAG_MIN_SCORE', '0.5')}")
+              f"min_score={os.environ.get('ORGMIND_RAG_MIN_SCORE', '0.25')}")
         t0 = time.monotonic()
         res = client.post("/api/rag/docs", json={"employee_id": OWNER, "title": f"Zephyr-9 runbook {code}", "text": text})
         if res.status_code != 200:
@@ -62,11 +90,17 @@ def main():
         doc = res.json()
         print(f"uploaded {doc['id']} -> {doc['gcs_uri']} status={doc['status']} ({time.monotonic() - t0:.1f}s)")
         print(f"  import operation: {doc['import_operation']}")
+        # A near-miss doc for the negative checks: shares words with "vault token expired on staging deploy".
+        freeze = client.post("/api/rag/docs", json={"employee_id": OWNER, "title": f"Staging release freeze {code}",
+                                                    "text": FREEZE_NOTE}).json()
+        print(f"uploaded near-miss doc {freeze['id']} status={freeze['status']}")
 
         status, t_ready = doc["status"], None
         while time.monotonic() - t0 < args.timeout:
             rows = {d["id"]: d for d in client.get(f"/api/rag/docs?employee_id={OWNER}").json()}
             row = rows[doc["id"]]
+            if rows[freeze["id"]]["status"] not in ("ready", "failed"):
+                row = dict(row, status="indexing") if row["status"] == "ready" else row
             if row["status"] != status:
                 status = row["status"]
                 print(f"  [{time.monotonic() - t0:6.1f}s] status -> {status} {row.get('error') or ''}")
@@ -118,6 +152,17 @@ def main():
             ok = False
 
         if args.gemini:
+            print("\nnegative checks (docs do not answer these; playbooks off, min_score="
+                  f"{os.environ.get('ORGMIND_RAG_MIN_SCORE', '0.25')}):")
+            for q in NEGATIVE:
+                sid = client.post("/api/sessions", json={"employee_id": OWNER, "agent_id": "a_dev"}).json()["id"]
+                r = client.post(f"/api/sessions/{sid}/messages",
+                                json={"content": q, "use_rag": True, "use_playbooks": False}).json()
+                problems = check_negative(r, q)
+                ok = ok and not problems
+                print(f"\n[negative] {q}\n  excerpts={[(h['title'], h['score']) for h in r['rag']['retrieved']]} "
+                      f"cited_doc_ids={r['message']['cited_doc_ids']} -> {'PASS' if not problems else 'FAIL ' + '; '.join(problems)}")
+                print("  " + r["answer"].replace("\n", "\n  "))
             for emp, q in ((OWNER, fact_q), (OWNER, UNRELATED), (OTHER, fact_q)):
                 sid = client.post("/api/sessions", json={"employee_id": emp, "agent_id": "a_dev"}).json()["id"]
                 r = client.post(f"/api/sessions/{sid}/messages", json={"content": q, "use_rag": True}).json()

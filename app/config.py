@@ -23,8 +23,10 @@ class Settings:
     rag_datastore: str = ""
     rag_bucket: str = ""
     rag_location: str = "global"
-    rag_min_score: float = 0.5
+    rag_min_score: float = 0.25
     rag_top_k: int = 3
+    skill_min_score: float = 0.6
+    skill_top_k: int = 2
     org_id: str = "acme"
 
 
@@ -50,6 +52,8 @@ def get_settings() -> Settings:
         rag_datastore=os.getenv("ORGMIND_RAG_DATASTORE", ""),
         rag_bucket=os.getenv("ORGMIND_RAG_BUCKET", ""),
         rag_location=os.getenv("ORGMIND_RAG_LOCATION", "global"),
-        rag_min_score=float(os.getenv("ORGMIND_RAG_MIN_SCORE", "0.5")),
+        rag_min_score=float(os.getenv("ORGMIND_RAG_MIN_SCORE", "0.25")),
         rag_top_k=int(os.getenv("ORGMIND_RAG_TOP_K", "3")),
+        skill_min_score=float(os.getenv("ORGMIND_SKILL_MIN_SCORE", "0.6")),
+        skill_top_k=int(os.getenv("ORGMIND_SKILL_TOP_K", "2")),
     )

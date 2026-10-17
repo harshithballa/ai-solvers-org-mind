@@ -116,7 +116,8 @@ playbooks in parallel → **match** existing playbooks (update and bump the vers
 | `ORGMIND_RAG_DATASTORE` | (none) | Discovery Engine data store ID (unstructured, `default_collection`, `default_search` serving config) |
 | `ORGMIND_RAG_BUCKET` | (none) | GCS bucket for uploaded documents (`private/{employee_id}/{doc_id}-{filename}`) |
 | `ORGMIND_RAG_LOCATION` | `global` | Data store location |
-| `ORGMIND_RAG_MIN_SCORE` | `0.5` | Search hits under this `semanticRelevanceScore` count as "not covered" |
+| `ORGMIND_RAG_MIN_SCORE` | `0.25` | Search hits under this `semanticRelevanceScore` count as "not covered" |
+| `ORGMIND_SKILL_MIN_SCORE` | `0.6` | Cosine similarity needed to offer an active skill to the agent (measured: related 0.70–0.79, unrelated 0.46–0.57) |
 | `ORGMIND_ADMIN_TOKEN` | (none) | Required `X-Admin-Token` for `POST /api/demo/reset`. Reset is **disabled** when unset. On Cloud Run it comes from Secret Manager |
 
 ## Run locally
@@ -139,6 +140,8 @@ Tests and evals:
 .venv/bin/pytest                                                 # unit + API tests (fake LLM)
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions        # 12 fixed questions, real Gemini
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions --url https://<service-url>
+GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.skills_eval           # skill extraction + use, real Gemini
+.venv/bin/python -m scripts.rag_smoke --gemini                                     # real Vertex AI Search data store
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.firestore_persistence_check --database orgmind-test
 ORGMIND_ADMIN_TOKEN=<token> .venv/bin/python scripts/demo_flow.py --url <url>     # headless browser demo flow
 .venv/bin/python scripts/ui_tabs_check.py --url <url>    # every tab at desktop + phone width, preview rules
@@ -168,12 +171,39 @@ Employees upload their own documents and agents answer grounded in them, with ci
 - To enable on Cloud Run (not done yet), the runtime service account additionally needs `roles/discoveryengine.editor`
   on the project and `roles/storage.objectAdmin` on the bucket.
 
+## Skills (Phase 2, `rag-skills` branch)
+
+Three kinds of knowledge, kept distinct in code and docs:
+
+| | What it is | Built from | Visible to |
+|---|---|---|---|
+| **Playbook** (`app/distiller.py`) | Org-wide fix for one recurring problem | Resolved sessions of **2+ employees** hitting the same problem | Everyone (per agent) |
+| **RAG doc** (`app/rag_docs.py`) | Raw uploaded source material, searched at answer time | An employee's upload | Owner, or everyone if `scope=org` |
+| **Skill** (`app/skills.py`) | A reusable procedure **one** employee's agent worked out in **one** conversation | One session | Owner (`scope=org` sharing arrives in Phase 4) |
+
+- **Extract** `POST /api/skills/extract {session_id, employee_id}` (session owner only, at least 4 messages): one
+  Gemini call returns 0–2 skills (name, description, trigger, steps, parameters as names only, evidence message
+  indexes). The writer only extracts confirmed procedures, keeps org-wide facts and turns personal values into
+  `{parameters}`. Deterministic post-checks reject skills without valid evidence or with secret-like strings
+  (AWS keys, bearer tokens, emails, long hex/base64) and redact values the model itself flagged as personal.
+  Re-extracting replaces the session's **draft** skills only. New skills are `scope=private`, `status=draft`.
+- **Review** `GET /api/skills?employee_id=` (own skills + active org skills; drafts only to their owner),
+  `POST /api/skills/{id}/approve` (draft → active), `/archive`, and `PATCH /api/skills/{id}` (name, description,
+  steps; bumps `version`). Owner only.
+- **Use** `use_skills: true` on the messages endpoint: the top 2 **active** skills for this agent kind visible to
+  the employee, above `ORGMIND_SKILL_MIN_SCORE`, go into a "Skills you have learned" block (after playbooks, before
+  document excerpts). The agent gives the steps and asks only for the listed parameters; `cited_skill_ids` is stored
+  on the message. Failures degrade to an answer without skills.
+- Spans: `skills.extract` (proposed/saved/rejected/redacted counts, latency) and `skills.retrieve` (candidates,
+  kept, top score). Extraction calls appear in `llm_calls` as `extract_skills`.
+
 ## Seed and reset
 
 - On startup the app seeds Acme Corp **only if the store is empty**: 8 employees, Dev + HR agents and
-  14 scripted sessions. Those include a recurring vault-token problem (3 resolved, 1 unresolved), a stipend
-  problem raised by 3 employees, a problem one employee repeated, a recurring problem nobody solved (Kafka)
-  and some unrelated noise.
+  15 scripted sessions. Those include a recurring vault-token problem (3 resolved, 1 unresolved), a stipend
+  problem raised by 3 employees, a problem one employee repeated, a recurring problem nobody solved (Kafka),
+  some unrelated noise, and Dana's BigQuery session (`ses_seed_14`, one employee working out a reusable procedure:
+  the skill-extraction demo; it forms no cluster and no playbook).
 - Summaries, clusters and playbooks are always computed live by Gemini. Nothing is pre-baked.
 - **Reset demo** (top-right button, or `curl -X POST -H "X-Admin-Token: $ORGMIND_ADMIN_TOKEN" <url>/api/demo/reset`)
   wipes sessions and playbooks and re-seeds.
@@ -200,7 +230,7 @@ Before each take: **Reset demo** (top right, admin token). The app opens on **Ad
    command. The right answer says *"No playbook matched"*. There's no org knowledge yet.
 2. **Distill.** Click **Distill sessions** in the *Org knowledge* panel. While it runs (10–55s) the button counts
    seconds and the report shows *Summarizing sessions → clustering → writing playbooks*. The report then shows
-   14 sessions, 4 recurring clusters and per-phase timings:
+   15 sessions, 4 recurring clusters and per-phase timings:
    - **created**: vault-token playbook (Priya, Marcus, Sofia resolved it; Tom didn't)
    - **skipped**: Docker builds, *resolved by only one employee*
    - **skipped**: Kafka lag, *recurring, but nobody has resolved it yet*

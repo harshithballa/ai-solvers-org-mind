@@ -118,7 +118,7 @@ def test_scope_private_never_leaks_org_shared_for_all(fake, fresh_store):
 def test_unmapped_and_low_score_hits_are_dropped(fake, monkeypatch):
     doc = _upload("e_dana", "Freeze", FREEZE)
     hits = [SearchHit(uri="gs://other/imported-elsewhere.txt", snippet="x", score=0.9, source="snippet"),
-            SearchHit(uri=doc["gcs_uri"], snippet="weak", score=0.3, source="extractive_segment")]
+            SearchHit(uri=doc["gcs_uri"], snippet="weak", score=0.2, source="extractive_segment")]
     monkeypatch.setattr(fake, "search", lambda q, page_size=10: hits)
     out, stats = rag_docs.search(fake, ORG_ID, "e_dana", "anything")
     assert out == [] and stats.unmapped == 1 and stats.below_score == 1

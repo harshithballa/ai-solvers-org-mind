@@ -18,6 +18,12 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Config only via env vars (see `app/config.py` and `.env.example`).
 - `ORGMIND_LLM=fake` gives a deterministic stub LLM/embedder for tests and offline UI work. The demo always runs against real Gemini.
 
+## Knowledge types (keep distinct)
+- **Playbook**: org-wide fix distilled from the same problem across 2+ employees' resolved sessions (`app/distiller.py`).
+- **RAG doc**: raw uploaded source material searched at answer time (`app/rag.py` providers, `app/rag_docs.py` ownership/scope).
+- **Skill**: reusable procedure ONE employee's agent learned in ONE conversation (`app/skills.py`); private draft until the owner approves.
+- Prompt order when several are on: playbooks, skills, document excerpts. Every retrieval failure degrades to answering without it.
+
 ## Distiller rules
 - A playbook needs a cluster of similar sessions from **at least 2 distinct employees** with resolved sessions. Repeats by a single employee don't count.
 - **Only resolved sessions contribute steps.** Unresolved sessions in a cluster are recorded as related but are never sent to the playbook compiler.
@@ -44,6 +50,6 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Every LLM call that returns data uses Gemini structured output (`response_mime_type="application/json"` + `response_schema`). Don't parse free text with regexes.
 - Prompts live in `app/prompts.py`.
 - Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store). Dev deps: `requirements-dev.txt`; the image installs only `requirements.txt`.
-- Must stay green: `pytest`; `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
+- Must stay green: `python -m pytest`; `scripts/skills_eval.py` (real Gemini); `scripts/rag_smoke.py --gemini` (real data store); `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
 - Firestore database is `ORGMIND_FIRESTORE_DATABASE` (default `(default)` = demo). Seeding happens on startup only when the store is empty.
 - Deploy: see README "Deploy (Cloud Run)" (keeps `--set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest` and `ORGMIND_TRACING=cloudtrace`).

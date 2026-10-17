@@ -8,7 +8,7 @@ from typing import Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, RagDoc, Session
+from app.models import Agent, Employee, LLMCall, Message, Org, Playbook, RagDoc, Session, Skill
 from app.tracing import span
 
 T = TypeVar("T", bound=BaseModel)
@@ -20,6 +20,7 @@ COLLECTIONS: dict[type[BaseModel], str] = {
     Session: "sessions",
     Playbook: "playbooks",
     RagDoc: "rag_docs",
+    Skill: "skills",          # derived from (seeded) sessions, so demo reset wipes them like playbooks
 }
 # Demo reset wipes these. rag_docs survives: its rows own real GCS objects / index documents, and
 # losing them would orphan those documents (search hits would then be dropped as unowned).
@@ -28,6 +29,7 @@ RESET_COLLECTIONS = [c for c in COLLECTIONS.values() if c != "rag_docs"]
 
 class Store(Protocol):
     def put(self, obj: BaseModel) -> None: ...
+    def delete(self, cls: type[BaseModel], id: str) -> None: ...
     def get(self, cls: type[T], id: str) -> T | None: ...
     def list(self, cls: type[T], **filters) -> list[T]: ...
     def add_message(self, msg: Message) -> None: ...
@@ -54,6 +56,10 @@ class MemoryStore:
     def put(self, obj: BaseModel) -> None:
         with self._lock:
             self._data[COLLECTIONS[type(obj)]][obj.id] = obj.model_dump()
+
+    def delete(self, cls: type[BaseModel], id: str) -> None:
+        with self._lock:
+            self._data[COLLECTIONS[cls]].pop(id, None)
 
     def get(self, cls: type[T], id: str) -> T | None:
         raw = self._data[COLLECTIONS[cls]].get(id)
@@ -96,6 +102,11 @@ class FirestoreStore:
         name = COLLECTIONS[type(obj)]
         with span("firestore.write", **{"db.system": "firestore", "db.collection.name": name}):
             self._db.collection(name).document(obj.id).set(obj.model_dump(mode="json"))
+
+    def delete(self, cls: type[BaseModel], id: str) -> None:
+        name = COLLECTIONS[cls]
+        with span("firestore.write", **{"db.system": "firestore", "db.collection.name": name, "orgmind.op": "delete"}):
+            self._db.collection(name).document(id).delete()
 
     def get(self, cls: type[T], id: str) -> T | None:
         snap = self._db.collection(COLLECTIONS[cls]).document(id).get()

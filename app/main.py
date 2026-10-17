@@ -14,8 +14,8 @@ from app.agent import AnswerResult, answer
 from app.config import get_settings
 from app.distiller import DistillReport, distill
 from app.llm import get_llm
-from app.models import Agent, Employee, Message, Org, Playbook, RagDoc, Session, now
-from app import rag_docs
+from app.models import Agent, Employee, Message, Org, Playbook, RagDoc, Session, Skill, now
+from app import rag_docs, skills
 from app.rag import get_rag_provider
 from app.seed import ORG_ID, seed
 from app.store import get_store
@@ -40,7 +40,8 @@ TRACED = [("POST", re.compile(r"^/api/sessions/[^/]+/messages$"), "chat"),
           ("POST", re.compile(r"^/api/compare$"), "compare"),
           ("POST", re.compile(r"^/api/rag/docs$"), "rag_upload"),
           ("GET", re.compile(r"^/api/rag/docs$"), "rag_docs"),
-          ("POST", re.compile(r"^/api/rag/search$"), "rag_search")]
+          ("POST", re.compile(r"^/api/rag/search$"), "rag_search"),
+          ("POST", re.compile(r"^/api/skills/extract$"), "skills_extract")]
 
 
 @app.middleware("http")
@@ -73,6 +74,9 @@ def _result_payload(r: AnswerResult) -> dict:
         "cited": [{"id": p.id, "title": p.title, "version": p.version} for p in r.cited],
         "retrieved": [{"id": p.id, "title": p.title, "score": round(sc, 3)} for p, sc in r.retrieved],
         "cited_docs": [{"id": h.doc.id, "title": h.doc.title} for h in r.cited_docs],
+        "cited_skills": [{"id": sk.id, "name": sk.name, "version": sk.version} for sk in r.cited_skills],
+        "skills": {"error": r.skills_error,
+                   "retrieved": [{"id": sk.id, "name": sk.name, "score": round(sc, 3)} for sk, sc in r.retrieved_skills]},
         "rag": {"used": r.rag_used, "error": r.rag_error,
                 "retrieved": [_hit_payload(h) for h in r.retrieved_docs]},
     }
@@ -125,6 +129,7 @@ class NewMessage(BaseModel):
     content: str
     use_playbooks: bool = True
     use_rag: bool = False
+    use_skills: bool = False
 
 
 @app.get("/api/sessions")
@@ -161,11 +166,12 @@ def post_message(session_id: str, body: NewMessage):
     history = store.list_messages(session_id)
 
     result = answer(agent, history, body.content, use_playbooks=body.use_playbooks,
-                    use_rag=body.use_rag, employee_id=session.employee_id)
+                    use_rag=body.use_rag, employee_id=session.employee_id, use_skills=body.use_skills)
     store.add_message(Message(session_id=session_id, role="user", content=body.content))
     reply = Message(session_id=session_id, role="assistant", content=result.answer,
                     cited_playbook_ids=[p.id for p in result.cited],
-                    cited_doc_ids=[h.doc.id for h in result.cited_docs])
+                    cited_doc_ids=[h.doc.id for h in result.cited_docs],
+                    cited_skill_ids=[sk.id for sk in result.cited_skills])
     store.add_message(reply)
 
     if not history:
@@ -289,6 +295,66 @@ def rag_search(body: RagSearch):
         tracing.log.warning("rag search failed: %s", e)
         raise HTTPException(502, f"search failed: {type(e).__name__}") from None
     return {"query": body.query, "results": [_hit_payload(h) for h in hits]}
+
+
+# ---------- skills (one employee's learned procedures; not playbooks) ----------
+
+def _skill_payload(sk: Skill) -> dict:
+    return sk.model_dump(mode="json", exclude={"embedding"})
+
+
+def _skill_call(fn, *args):
+    try:
+        return fn(*args)
+    except skills.SkillError as e:
+        raise HTTPException(e.status, str(e)) from None
+
+
+class ExtractSkills(BaseModel):
+    session_id: str
+    employee_id: str
+
+
+@app.post("/api/skills/extract")
+def extract_skills(body: ExtractSkills):
+    session = _get_or_404(Session, body.session_id)
+    _get_or_404(Employee, body.employee_id)
+    found, stats = _skill_call(skills.extract, session, body.employee_id)
+    return {"session_id": session.id, "skills": [_skill_payload(sk) for sk in found],
+            "proposed": stats.proposed, "rejected": stats.rejected, "redacted": stats.redacted,
+            "replaced_drafts": stats.replaced_drafts}
+
+
+@app.get("/api/skills")
+def list_skills(employee_id: str):
+    _get_or_404(Employee, employee_id)
+    return [_skill_payload(sk) for sk in skills.visible(ORG_ID, employee_id)]
+
+
+class SkillAction(BaseModel):
+    employee_id: str
+
+
+class SkillEdit(BaseModel):
+    employee_id: str
+    name: str | None = None
+    description: str | None = None
+    steps: list[str] | None = None
+
+
+@app.post("/api/skills/{skill_id}/approve")
+def approve_skill(skill_id: str, body: SkillAction):
+    return _skill_payload(_skill_call(skills.approve, skill_id, body.employee_id))
+
+
+@app.post("/api/skills/{skill_id}/archive")
+def archive_skill(skill_id: str, body: SkillAction):
+    return _skill_payload(_skill_call(skills.archive, skill_id, body.employee_id))
+
+
+@app.patch("/api/skills/{skill_id}")
+def edit_skill(skill_id: str, body: SkillEdit):
+    return _skill_payload(_skill_call(skills.edit, skill_id, body.employee_id, body.name, body.description, body.steps))
 
 
 @app.get("/api/traces")

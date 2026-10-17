@@ -121,7 +121,22 @@ SESSIONS: list[tuple[str, str, int, list[str]]] = [
         "Scaled to 6 replicas, lag still grows. Didn't fix it, no idea what's wrong.",
         "Sorry, I don't have more Acme-specific guidance for this.",
     ]),
+    # ---- Dev: ONE employee works out a reusable procedure (skill extraction; must NOT become a playbook) ----
+    # Contains one personal value (Dana's sandbox project) that must never appear in an extracted skill.
+    ("e_dana", "a_dev", 1, [
+        "I need to query the Acme analytics dataset in BigQuery (table `acme-analytics.events.orders`) from my laptop. How do I authenticate?",
+        "Use Application Default Credentials: run `gcloud auth application-default login` and sign in with your Acme Google account. Service-account key files aren't allowed on laptops.",
+        "Logged in. Now `bq query \"SELECT COUNT(*) FROM acme-analytics.events.orders\"` fails with `Access Denied: Project acme-analytics: User does not have bigquery.jobs.create permission`.",
+        "You can read `acme-analytics`, but query jobs must run in a project you're allowed to bill. Pass your own sandbox project with `--project_id=<your sandbox project>`.",
+        "My sandbox is acme-sbx-dkim-4821. With `--project_id=acme-sbx-dkim-4821` it now says `Syntax error: Unexpected \"-\"` near the table name.",
+        "That's the gotcha: `bq query` defaults to legacy SQL. Add `--use_legacy_sql=false` and wrap the table name in backticks for standard SQL, e.g. FROM `acme-analytics.events.orders`.",
+        "That worked: bq query --project_id=acme-sbx-dkim-4821 --use_legacy_sql=false 'SELECT COUNT(*) FROM `acme-analytics.events.orders`' returned the row count. Thanks!",
+        "Great. To recap: ADC login once, then `bq query` with `--project_id` set to your own sandbox project and `--use_legacy_sql=false`, with the table in backticks.",
+    ]),
 ]
+
+BIGQUERY_SESSION_ID = "ses_seed_14"  # index in SESSIONS above
+BIGQUERY_PERSONAL_VALUE = "acme-sbx-dkim-4821"
 
 
 def seed(store: Store) -> None:

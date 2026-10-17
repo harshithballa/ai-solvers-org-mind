@@ -5,6 +5,7 @@ os.environ.update({
     "ORGMIND_STORE": "memory",
     "ORGMIND_CLUSTER_THRESHOLD": "0.35",
     "ORGMIND_RETRIEVAL_THRESHOLD": "0.2",
+    "ORGMIND_SKILL_MIN_SCORE": "0.2",
     "ORGMIND_ADMIN_TOKEN": "test-token",
     "ORGMIND_TRACING": "off",  # never export spans from unit tests
 })
