@@ -61,6 +61,7 @@ def main():
 
     for k, v in DEFAULTS.items():
         os.environ.setdefault(k, v)
+    os.environ.setdefault("ORGMIND_LIMITS", "off")  # eval runs are not demo traffic
     os.environ.update({"ORGMIND_STORE": "memory", "ORGMIND_RAG_PROVIDER": "vertex", "ORGMIND_TRACING": "off",
                        "ORGMIND_LLM": "vertex" if args.gemini else "fake"})
 

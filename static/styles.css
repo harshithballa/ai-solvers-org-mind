@@ -357,6 +357,18 @@ textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--border); bo
   .admin-link { padding: 5px 4px; }
 }
 
+.limit-note { color: var(--amber); background: var(--amber-soft); border-radius: 8px; padding: 8px 10px; }
+.report.limit-note { border-left: 3px solid var(--amber); }
+.msg.notice { align-self: center; max-width: 90%; }
+.msg.notice .bubble { background: var(--amber-soft); color: var(--amber); border: 1px solid #f5dfa4; font-size: 13px; }
+.usage-box { border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px 10px; margin-bottom: 12px; }
+.usage-box h3 { margin: 8px 0; }
+.usage-grid { display: grid; gap: 4px; margin-top: 8px; }
+.usage-row { display: grid; grid-template-columns: 140px 1fr 90px; gap: 10px; align-items: center; font-size: 12px; }
+.usage-bar { height: 6px; background: var(--bg); border-radius: 999px; overflow: hidden; }
+.usage-bar span { display: block; height: 100%; background: var(--accent); }
+.usage-box input[type=password] { padding: 4px 8px; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
   .split-right { grid-template-columns: minmax(0, 1fr) 300px; }

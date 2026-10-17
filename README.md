@@ -123,6 +123,9 @@ playbooks in parallel → **match** existing playbooks (update and bump the vers
 | `ORGMIND_RAG_LOCATION` | `global` | Data store location |
 | `ORGMIND_RAG_MIN_SCORE` | `0.25` | Search hits under this `semanticRelevanceScore` count as "not covered" |
 | `ORGMIND_SKILL_MIN_SCORE` | `0.6` | Cosine similarity needed to offer an active skill to the agent (measured: related 0.70–0.79, unrelated 0.46–0.57) |
+| `ORGMIND_LIMITS` | `on` | Cost caps for the public demo; `off` disables them (tests and eval scripts) |
+| `ORGMIND_LIMIT_<BUCKET>` | see below | Per-UTC-day global caps: `GEMINI_CALLS` 600, `CHAT_MESSAGES` 250, `DISTILL` 15, `SKILLS_EXTRACT` 30, `SHARE_SCANS` 40, `COMPARE` 120, `RAG_UPLOADS` 20, `SESSIONS_CREATED` 80 |
+| `ORGMIND_IP_LIMIT_<BUCKET>` | `CHAT_MESSAGES` 40, `DISTILL` 3 | Best-effort per-client-IP caps per hour (in memory, per instance) |
 | `ORGMIND_ADMIN_TOKEN` | (none) | Required `X-Admin-Token` for `POST /api/demo/reset`. Reset is **disabled** when unset. On Cloud Run it comes from Secret Manager |
 
 ## Run locally
@@ -285,6 +288,24 @@ Before each take: open **Admin** (header link), click **Reset demo** (top right,
 - **Deferred to V3:** PII redaction before sessions reach the distiller, and a human review step before a
   playbook publishes (both previewed in *Admin › Guardrails*).
 - Public demo: chat, compare and distill are unauthenticated and call Gemini; `--max-instances 1` caps spend.
+
+## Cost caps
+
+The public deployment bounds worst-case spend (budget: INR 1,000 for the judging window).
+- Daily global counters per bucket (`usage_counters`, doc id `{UTC date}-{bucket}`, atomic increments). Every real
+  Gemini call is counted inside `app/llm.py`, including calls made by distill, extraction and share scans.
+  Distill, extraction and compare first check that enough Gemini calls remain, so they are refused up front
+  instead of failing half way.
+- Over a limit: HTTP 429 `{"detail", "limit", "resets": "00:00 UTC"}`, shown inline in the UI. Messages over 2,000
+  characters get 413; a chat stops at 60 messages (409). Chat answers use `max_output_tokens=2048`.
+- Requests with the valid `X-Admin-Token` are neither counted nor limited (the UI sends the token once it has been
+  entered in the Reset demo prompt). If the counter store fails, requests are allowed (fail open).
+- `GET /api/usage` (admin token) shows today's counts against the limits, also on *Admin › Traces*.
+- Measured with `python -m scripts.cost_estimate` (real Gemini; prices and sources are in the script): a chat answer
+  costs about $0.0009 (INR 0.08), a distill $0.013 (INR 1.1), a skill extraction $0.0012, a compare $0.0010. The 600
+  Gemini-call ceiling caps Gemini spend at well under INR 50 a day; every bucket at its cap is about INR 141 a day,
+  most of it Vertex AI Search queries, which the 10,000 free queries a month normally cover.
+  Not included: Cloud Run, Firestore and Cloud Trace.
 
 ## Known limitations
 

@@ -119,6 +119,7 @@ def main():
         playbooks = _get(base, "/api/playbooks")
         clusters = None
     else:
+        os.environ.setdefault("ORGMIND_LIMITS", "off")  # eval runs are not demo traffic
         os.environ.setdefault("ORGMIND_STORE", "memory")
         from app.config import get_settings
         from app.distiller import distill
@@ -168,6 +169,10 @@ def main():
         print(f"  {'PASS' if not fails else 'FAIL'} [{q.kind}] {q.question[:80]}")
         for f in fails:
             print(f"       - {f}")
+        if fails:  # always record what failed, even with --quiet
+            wp = answers[q.question]["with_playbooks"]
+            print(f"       retrieved: {[(r['title'], r['score']) for r in wp['retrieved']]}")
+            print("       answer:\n" + textwrap.indent(wp["answer"].strip(), "         | "))
     leaks = leak_check(playbooks)
     print(f"  {'PASS' if not leaks else 'FAIL'} playbook leak check ({len(playbooks)} playbooks)")
     for leak in leaks:

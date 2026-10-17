@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from app.config import get_settings
 from app.llm import cosine, get_llm
 from app.models import Session, Skill, SkillDraftOut, SkillsOut, now
-from app.prompts import SKILL_EXTRACT_SYSTEM, format_numbered_transcript
+from app.prompts import SKILL_EXTRACT_SYSTEM, format_numbered_transcript, is_cited_answer
 from app.store import get_store
 from app.tracing import set_attrs, span
 
@@ -107,11 +107,15 @@ def _fake_extract(msgs) -> SkillsOut:
         trigger=topic, steps=[f"Run `{c}`" for c in codes], parameters=[], evidence=sorted(set(evidence)))])
 
 
-def _check(draft: SkillDraftOut, n_messages: int, stats: ExtractStats) -> SkillDraftOut | None:
+def _check(draft: SkillDraftOut, msgs, stats: ExtractStats) -> SkillDraftOut | None:
     """Deterministic post-checks. Returns the (possibly redacted) draft, or None if rejected."""
-    evidence = sorted({i for i in draft.evidence if 0 <= i < n_messages})
+    evidence = sorted({i for i in draft.evidence if 0 <= i < len(msgs)})
     if not evidence:
         stats.rejections.append(f"{draft.name!r}: no valid evidence indexes")
+        return None
+    if all(is_cited_answer(msgs[i]) for i in evidence):
+        # Only backed by agent turns that repeated playbooks/documents: nothing this employee worked out.
+        stats.rejections.append(f"{draft.name!r}: evidence is only agent answers citing playbooks/documents")
         return None
     hits = secret_hits(skill_text(draft))
     if hits:
@@ -145,7 +149,7 @@ def extract(session: Session, employee_id: str) -> tuple[list[Skill], ExtractSta
         out = get_llm().generate_json(SKILL_EXTRACT_SYSTEM, f"Conversation:\n{format_numbered_transcript(msgs)}",
                                       SkillsOut, fake=lambda: _fake_extract(msgs))
         stats.proposed = len(out.skills)
-        drafts = [d for d in (_check(d, len(msgs), stats) for d in out.skills[:MAX_SKILLS]) if d is not None]
+        drafts = [d for d in (_check(d, msgs, stats) for d in out.skills[:MAX_SKILLS]) if d is not None]
         stats.rejected = stats.proposed - len(drafts)
         for r in stats.rejections:
             log.warning("skill rejected (session %s): %s", session.id, r)

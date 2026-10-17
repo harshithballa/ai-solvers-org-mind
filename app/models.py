@@ -187,7 +187,7 @@ class AnswerWithDocsOut(BaseModel):
     """Used only when the request asked for document RAG, so the playbook-only schema stays unchanged."""
     answer: str = Field(description="The reply to the employee, in Markdown.")
     used_playbook_ids: list[str] = Field(description="IDs of the provided playbooks actually used in the answer. Empty if none.")
-    used_doc_ids: list[str] = Field(description="IDs of the provided document excerpts actually used in the answer. Empty if none.")
+    used_doc_titles: list[str] = Field(description="Titles of the provided documents actually used in the answer, exactly as labelled. Empty if none.")
 
 
 class SkillDraftOut(BaseModel):
@@ -216,4 +216,4 @@ class AnswerWithSkillsAndDocsOut(BaseModel):
     answer: str = Field(description="The reply to the employee, in Markdown.")
     used_playbook_ids: list[str] = Field(description="IDs of the provided playbooks actually used in the answer. Empty if none.")
     used_skill_ids: list[str] = Field(description="IDs of the provided skills actually applied in the answer. Empty if none.")
-    used_doc_ids: list[str] = Field(description="IDs of the provided document excerpts actually used in the answer. Empty if none.")
+    used_doc_titles: list[str] = Field(description="Titles of the provided documents actually used in the answer, exactly as labelled. Empty if none.")

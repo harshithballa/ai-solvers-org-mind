@@ -237,3 +237,32 @@ def test_demo_caps_doc_count_and_pasted_text(fake, monkeypatch):
     _upload("e_noah", "two", "second doc")
     res = client.post("/api/rag/docs", json={"employee_id": "e_dana", "title": "three", "text": "third"})
     assert res.status_code == 429 and "at most 2 documents" in res.json()["detail"]
+
+
+def test_excerpts_labelled_by_title_and_leaked_ids_rewritten(fake, monkeypatch):
+    from app.llm import get_llm
+    from app.models import AnswerWithDocsOut
+    doc = _upload("e_dana", "Release freeze", FREEZE)
+    seen = {}
+    real = get_llm().generate_json
+
+    def leaky(system, contents, schema, fake, think=False):
+        seen["system"] = system
+        out = AnswerWithDocsOut(answer=f"Freeze is Thursdays 4pm-6pm IST. (From {doc['id']})",
+                                used_playbook_ids=[], used_doc_titles=["release freeze"])
+        return real(system, contents, schema, lambda: out, think)
+
+    monkeypatch.setattr(get_llm(), "generate_json", leaky)
+    sid = client.post("/api/sessions", json={"employee_id": "e_dana", "agent_id": "a_dev"}).json()["id"]
+    res = client.post(f"/api/sessions/{sid}/messages",
+                      json={"content": "When is the staging deploy freeze?", "use_rag": True}).json()
+    assert "### Document: Release freeze" in seen["system"] and doc["id"] not in seen["system"]
+    assert doc["id"] not in res["answer"] and "(From Release freeze)" in res["answer"]
+    assert res["message"]["cited_doc_ids"] == [doc["id"]]   # title mapped back to the id (case-insensitive)
+
+
+def test_duplicate_titles_get_unique_labels():
+    from types import SimpleNamespace as NS
+    from app.prompts import doc_labels
+    hits = [NS(doc=NS(title="Notes")), NS(doc=NS(title="Notes")), NS(doc=NS(title="Other"))]
+    assert doc_labels(hits) == ["Notes", "Notes (2)", "Other"]

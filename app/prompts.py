@@ -82,7 +82,8 @@ instead of filling the gap. This overrides any instruction above to give general
 commands, code or code blocks that are not in an excerpt or playbook, not even generic, well-known ones.
 You may suggest who to ask.
 Never invent commands, channels, names, links or policies that are not written in an excerpt or playbook.
-When you use an excerpt, mention its document by title, and put its ID in `used_doc_ids`.
+When you use an excerpt, refer to its document by its title (never by any ID), and put that exact title in
+`used_doc_titles`.
 
 {docs}"""
 
@@ -91,11 +92,21 @@ NO_DOCS_NOTE = """
 No uploaded document matched this question. Answer only from the playbooks above (if any). If they don't
 cover it, start your reply by saying clearly that your documents don't cover this question. This overrides any
 instruction above to give general guidance: your reply must contain no steps, commands, code or code blocks,
-not even generic, well-known ones, and no channel or tool names. You may suggest asking a relevant team. Return `used_doc_ids` as an empty list."""
+not even generic, well-known ones, and no channel or tool names. You may suggest asking a relevant team. Return `used_doc_titles` as an empty list."""
 
 
-def format_docs(hits) -> str:
-    return "\n\n".join(f"### [{h.doc.id}] {h.doc.title}\n{h.snippet}" for h in hits)
+def doc_labels(hits) -> list[str]:
+    """Unique per-prompt titles: excerpts are labelled (and cited back) by title, never by internal ID."""
+    labels, seen = [], {}
+    for h in hits:
+        base = h.doc.title.strip() or "Untitled document"
+        seen[base] = seen.get(base, 0) + 1
+        labels.append(base if seen[base] == 1 else f"{base} ({seen[base]})")
+    return labels
+
+
+def format_docs(hits, labels) -> str:
+    return "\n\n".join(f"### Document: {label}\n{h.snippet}" for h, label in zip(hits, labels))
 
 
 SKILL_EXTRACT_SYSTEM = """You turn ONE employee's conversation with an Acme Corp internal AI agent into reusable SKILLS:
@@ -104,8 +115,12 @@ The transcript is numbered; [n] is the message index.
 
 Rules:
 1. Only extract a skill if the conversation shows a reusable PROCEDURE (a sequence of actions, commands or
-   settings) that was actually worked out AND confirmed to work by the employee. Facts, policy answers, one-off
-   answers, small talk and unresolved or abandoned attempts produce NO skill: return an empty list.
+   settings) AND the EMPLOYEE confirms in their own message that it worked, or the employee supplies the detail
+   that resolved it. Facts, policy answers, one-off answers, small talk and unresolved or abandoned attempts
+   produce NO skill: return an empty list.
+   Steps that appear only in AGENT turns, especially turns marked "answering from org playbooks/documents",
+   with no later employee confirmation, produce NO skill: the agent repeating existing org knowledge is not a
+   procedure this employee learned. The employee asking again is not a confirmation.
 2. Every step must be traceable to the transcript. Use only commands, flags, APIs, menu paths and settings that
    appear in it. Do not invent or "improve" commands. Drop advice that the conversation shows did not work.
    Put the indexes of the messages that justify the steps in `evidence`.
@@ -146,8 +161,17 @@ def format_skills(skills) -> str:
     return "\n\n".join(blocks)
 
 
+def is_cited_answer(m) -> bool:
+    """An agent turn that answered from org playbooks or uploaded documents (not something the employee worked out)."""
+    return m.role == "assistant" and bool(m.cited_playbook_ids or m.cited_doc_ids)
+
+
 def format_numbered_transcript(messages) -> str:
-    return "\n".join(f"[{i}] {'EMPLOYEE' if m.role == 'user' else 'AGENT'}: {m.content}" for i, m in enumerate(messages))
+    def who(m):
+        if m.role == "user":
+            return "EMPLOYEE"
+        return "AGENT (answering from org playbooks/documents)" if is_cited_answer(m) else "AGENT"
+    return "\n".join(f"[{i}] {who(m)}: {m.content}" for i, m in enumerate(messages))
 
 
 # Appended to the model's copy of the user's turn (never stored) when document RAG is on: models follow a

@@ -8,6 +8,7 @@ os.environ.update({
     "ORGMIND_SKILL_MIN_SCORE": "0.2",
     "ORGMIND_ADMIN_TOKEN": "test-token",
     "ORGMIND_TRACING": "off",  # never export spans from unit tests
+    "ORGMIND_LIMITS": "off",   # cost caps are tested explicitly in test_limits.py
 })
 
 import pytest  # noqa: E402

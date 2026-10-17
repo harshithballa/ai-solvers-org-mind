@@ -37,6 +37,8 @@ class Store(Protocol):
     def reset(self) -> None: ...
     def is_empty(self) -> bool: ...
     def add_llm_calls(self, calls: list[LLMCall], cap: int) -> None: ...
+    def incr_counter(self, key: str, by: int = 1) -> int: ...
+    def get_counter(self, key: str) -> int: ...
     def list_llm_calls(self, limit: int) -> list[LLMCall]: ...
 
 
@@ -44,6 +46,7 @@ class MemoryStore:
     def __init__(self):
         self._lock = threading.Lock()
         self._llm_calls: deque[dict] = deque(maxlen=500)
+        self._counters: dict[str, int] = {}   # usage_counters: survives demo reset (a reset must not lift caps)
         self.reset()
 
     def reset(self) -> None:
@@ -80,6 +83,14 @@ class MemoryStore:
 
     def is_empty(self) -> bool:
         return not self._data["orgs"]
+
+    def incr_counter(self, key: str, by: int = 1) -> int:
+        with self._lock:
+            self._counters[key] = self._counters.get(key, 0) + by
+            return self._counters[key]
+
+    def get_counter(self, key: str) -> int:
+        return self._counters.get(key, 0)
 
     def add_llm_calls(self, calls: list[LLMCall], cap: int) -> None:
         with self._lock:
@@ -137,6 +148,18 @@ class FirestoreStore:
 
     def is_empty(self) -> bool:
         return not list(self._db.collection("orgs").limit(1).stream())
+
+    def incr_counter(self, key: str, by: int = 1) -> int:
+        """Atomic server-side increment, then read back (the read is not transactional: fine for a cost cap)."""
+        from google.cloud import firestore
+
+        ref = self._db.collection("usage_counters").document(key)
+        ref.set({"count": firestore.Increment(by), "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
+        return int((ref.get().to_dict() or {}).get("count", 0))
+
+    def get_counter(self, key: str) -> int:
+        snap = self._db.collection("usage_counters").document(key).get()
+        return int((snap.to_dict() or {}).get("count", 0)) if snap.exists else 0
 
     # Capped LLM-call log: write a batch per request; trim the oldest every TRIM_EVERY writes.
     TRIM_EVERY = 20

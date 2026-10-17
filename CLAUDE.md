@@ -41,6 +41,11 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - One root span per chat/distill/compare request (middleware); child spans for retrieval, every Gemini call (`llm.py` → `tracing.llm_call`) and Firestore writes. Worker threads must use `tracing.wrap(fn)` to keep the request context.
 - Every LLM call is also recorded (capped `llm_calls`, separate from demo data) for `GET /api/traces`; JSON logs on Cloud Run carry `logging.googleapis.com/trace`. Recording/export must never raise into request code; flush happens before the response returns.
 
+## Cost caps
+- `app/limits.py`: daily global buckets + per-IP hourly limits; every real Gemini call counts in `llm.py`; multi-call
+  operations reserve an estimate first. 429 payload `{detail, limit, resets}`. Admin token bypasses; fail open on
+  counter errors; `ORGMIND_LIMITS=off` in tests and eval scripts. Wrap pipelines with limits, never change their logic.
+
 ## Security
 - `POST /api/demo/reset` requires the header `X-Admin-Token` to equal `ORGMIND_ADMIN_TOKEN`. When the token is unset, reset is disabled.
 - On Cloud Run the admin token comes from Secret Manager (`orgmind-admin-token`), not a plain env var. Never print it.

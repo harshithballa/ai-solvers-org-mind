@@ -100,9 +100,10 @@ def test_personal_values_flagged_by_model_are_redacted():
     draft = SkillDraftOut(excluded_specifics=["acme-sbx-dkim-4821"], name="Run a query", description="d", trigger="t",
                           steps=["bq query --project_id=acme-sbx-dkim-4821"], parameters=[], evidence=[1])
     stats = skills.ExtractStats()
-    out = skills._check(draft, 4, stats)
+    msgs = [Message(session_id="s", role="user" if i % 2 == 0 else "assistant", content="x") for i in range(4)]
+    out = skills._check(draft, msgs, stats)
     assert out.steps == ["bq query --project_id={redacted}"] and stats.redacted == 1
-    assert skills._check(draft.model_copy(update={"evidence": [99]}), 4, stats) is None
+    assert skills._check(draft.model_copy(update={"evidence": [99]}), msgs, stats) is None
 
 
 def test_untraceable_code_detector():
@@ -246,3 +247,50 @@ def test_bigquery_session_does_not_change_distill(fresh_store):
     report = client.post("/api/distill", json={}).json()
     assert report["playbooks_created"] == 2
     assert not any(BIGQUERY_SESSION_ID in c["session_ids"] for c in report["clusters"] if c["outcome"] != "skipped")
+
+
+# ---------- regression: agent repeating playbook answers is not a learned skill ----------
+
+VAULT_TWICE = [
+    ("user", "My staging deploy is failing with ACME_VAULT_TOKEN expired. How do I fix it?", []),
+    ("assistant", "Per the playbook *Fix expired ACME_VAULT_TOKEN on staging deploy*:\n1. Connect to `acme-corp-vpn`.\n"
+                  "2. Run `acme auth refresh --vault`.\n3. Request `staging-deployers` in #platform-access.", ["pb_vault"]),
+    ("user", "My staging deploy is failing with ACME_VAULT_TOKEN expired. How do I fix it?", []),
+    ("assistant", "Per the playbook *Fix expired ACME_VAULT_TOKEN on staging deploy*:\n1. Connect to `acme-corp-vpn`.\n"
+                  "2. Run `acme auth refresh --vault`.", ["pb_vault"]),
+]
+
+
+def _vault_twice(store, sid="ses_vault_twice"):
+    store.put(Session(id=sid, org_id=ORG_ID, employee_id="e_dana", agent_id="a_dev", agent_kind="dev"))
+    for role, text, cited in VAULT_TWICE:
+        store.add_message(Message(session_id=sid, role=role, content=text, cited_playbook_ids=cited))
+    return sid
+
+
+def test_vault_question_twice_with_playbook_answers_yields_no_skill(fresh_store):
+    sid = _vault_twice(fresh_store)
+    res = _extract(sid).json()
+    assert res["skills"] == []
+
+
+def test_guard_drops_skill_backed_only_by_cited_agent_answers(fresh_store, monkeypatch):
+    """Even if the model proposes one, evidence pointing only at cited agent turns is rejected deterministically."""
+    from app.llm import get_llm
+    from app.models import SkillDraftOut, SkillsOut
+    sid = _vault_twice(fresh_store)
+    proposed = SkillsOut(skills=[SkillDraftOut(
+        excluded_specifics=[], name="Fix expired vault token", description="d", trigger="t",
+        steps=["Run `acme auth refresh --vault`"], parameters=[], evidence=[1, 3])])
+    real = get_llm().generate_json
+    monkeypatch.setattr(get_llm(), "generate_json",
+                        lambda system, contents, schema, fake, think=False: real(system, contents, schema, lambda: proposed, think))
+    res = _extract(sid).json()
+    assert res["proposed"] == 1 and res["rejected"] == 1 and res["skills"] == []
+
+
+def test_transcript_marks_cited_agent_turns(fresh_store):
+    from app.prompts import format_numbered_transcript
+    sid = _vault_twice(fresh_store)
+    text = format_numbered_transcript(fresh_store.list_messages(sid))
+    assert "[1] AGENT (answering from org playbooks/documents):" in text and "[0] EMPLOYEE:" in text

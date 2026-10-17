@@ -37,21 +37,35 @@ const state = {
 
 // ---------------- helpers ----------------
 
+// The admin token (entered once in the Reset demo prompt) is sent with every request, so the owner's own
+// browser is exempt from the demo cost caps, e.g. while recording.
+function adminHeaders() { const t = getToken(); return t ? { "X-Admin-Token": t } : {}; }
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers: { "Content-Type": "application/json", ...adminHeaders(), ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch {}
+    let detail = res.statusText, limit = null;
+    try {
+      const j = await res.json();
+      detail = typeof j.detail === "string" ? j.detail : j.detail?.message || detail;
+      limit = j.limit || null;
+    } catch {}
     const err = new Error(`${res.status}: ${detail}`);
     err.status = res.status;
+    err.detail = detail;
+    err.limit = limit;
     throw err;
   }
   return res.json();
 }
+
+// Limits and size caps are expected outcomes: show the server's friendly sentence, not "429: ...".
+const isFriendly = (e) => [409, 413, 429].includes(e?.status);
+const friendly = (e) => (isFriendly(e) ? e.detail : e.message);
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -175,7 +189,8 @@ async function runCompare() {
     $("#playbook-citations").innerHTML =
       (wp.cited.length ? `<strong>Cited:</strong>${citationChips(wp.cited)}` : `<strong>Cited:</strong> none`) + retrieved;
   } catch (e) {
-    $("#baseline-answer").innerHTML = $("#playbook-answer").innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+    $("#baseline-answer").innerHTML = $("#playbook-answer").innerHTML =
+      `<p class="${isFriendly(e) ? "limit-note" : "error"}">${escapeHtml(friendly(e))}</p>`;
   } finally {
     state.busy = false;
     setBusy(btn, false, "Ask both");
@@ -234,10 +249,11 @@ async function runDistill() {
     const changed = r.clusters.filter((c) => ["created", "updated"].includes(c.outcome)).map((c) => c.playbook_id);
     await loadPlaybooks(changed);
   } catch (e) {
-    $("#distill-report").innerHTML = `<div class="report error">${escapeHtml(e.message)}</div>`;
+    $("#distill-report").innerHTML = `<div class="report ${isFriendly(e) ? "limit-note" : "error"}">${escapeHtml(friendly(e))}</div>`;
+    if (e.status === 429) { clearInterval(timer); setBusy(btn, false, "Limit reached · try later"); return; }
   } finally {
     clearInterval(timer);
-    setBusy(btn, false, "Distill sessions");
+    if (btn.textContent.startsWith("Distilling")) setBusy(btn, false, "Distill sessions");
   }
 }
 
@@ -362,8 +378,22 @@ async function openSession(id) {
 }
 
 async function newSession() {
-  const s = await api("/api/sessions", { method: "POST", body: { employee_id: empId(), agent_id: state.agentId } });
-  await openSession(s.id);
+  try {
+    const s = await api("/api/sessions", { method: "POST", body: { employee_id: empId(), agent_id: state.agentId } });
+    await openSession(s.id);
+  } catch (e) {
+    if (!isFriendly(e)) throw e;
+    resetChat();
+    showNotice(e.detail);
+  }
+}
+
+function showNotice(text) {
+  const div = document.createElement("div");
+  div.className = "msg notice";
+  div.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+  $("#messages").appendChild(div);
+  $("#messages").scrollTop = $("#messages").scrollHeight;
 }
 
 async function sendMessage(e) {
@@ -393,7 +423,7 @@ async function sendMessage(e) {
     if (s) renderChatHeader(s);
   } catch (err) {
     typing.remove();
-    toast(err.message, true);
+    if (isFriendly(err)) showNotice(err.detail); else toast(err.message, true);
     input.value = content;
   } finally {
     state.busy = false;
@@ -425,7 +455,7 @@ async function learnSkills() {
     if (n) openKnowledge();
   } catch (e) {
     box.className = "learn-result warn";
-    box.textContent = e.status === 400 ? "This chat is too short to learn from yet (it needs at least 4 messages)." : e.message;
+    box.textContent = e.status === 400 ? "This chat is too short to learn from yet (it needs at least 4 messages)." : friendly(e);
   } finally {
     box.hidden = false;
     setBusy(btn, false, "✦ Learn skills from this chat");
@@ -505,6 +535,7 @@ async function submitDoc(e) {
   }
   setBusy(btn, true, "Uploading…");
   try {
+    req.headers = { ...(req.headers || {}), ...adminHeaders() };
     const res = await fetch("/api/rag/docs", req);
     if (!res.ok) {
       let detail = res.statusText;
@@ -737,6 +768,31 @@ function openDrawer() {
   loadTraces($("#drawer-body"), true);
 }
 
+// ---------------- usage (admin) ----------------
+
+async function loadUsage() {
+  const box = $("#usage-view");
+  if (!getToken()) {
+    box.innerHTML = `<div class="row"><span class="muted small">Today's usage vs limits needs the admin token.</span>
+      <input type="password" id="usage-token" placeholder="Admin token"><button class="btn ghost-light small" id="usage-go">Show</button></div>`;
+    $("#usage-go").onclick = () => { saveToken($("#usage-token").value); loadUsage(); };
+    return;
+  }
+  try {
+    const u = await api("/api/usage");
+    box.innerHTML = `<div class="muted small">Today (${escapeHtml(u.date)}, resets ${escapeHtml(u.resets)}) ·
+      limits ${u.limits_enabled ? "on" : "<b>off</b>"} · per IP per hour: ${Object.entries(u.ip_limits_per_hour).map(([k, v]) => `${escapeHtml(k)} ${v}`).join(", ")}</div>
+      <div class="usage-grid">${u.buckets.map((b) => {
+        const pct = b.count == null ? 0 : Math.min(100, Math.round((100 * b.count) / Math.max(1, b.limit)));
+        return `<div class="usage-row"><span>${escapeHtml(b.bucket)}</span><span class="usage-bar"><span style="width:${pct}%"></span></span>
+          <span class="muted small">${b.count ?? "?"} / ${b.limit}</span></div>`;
+      }).join("")}</div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted small">${e.status === 401 ? "Admin token not accepted." : escapeHtml(e.message)}</p>`;
+    if (e.status === 401) saveToken("");
+  }
+}
+
 // ---------------- routing ----------------
 
 const ADMIN_TABS = [
@@ -777,6 +833,7 @@ function route() {
     $("#cloud-trace-link").href = cloudTraceUrl() || "#";
     $("#cloud-trace-link").hidden = !cloudTraceUrl();
     loadTraces($("#traces-view"), false);
+    loadUsage();
   }
 }
 

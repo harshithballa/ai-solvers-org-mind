@@ -24,6 +24,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--url", default="http://localhost:8092")
 ap.add_argument("--shots", default=tempfile.mkdtemp(prefix="orgmind-user-flow-"))
 ap.add_argument("--index-timeout", type=int, default=900)
+ap.add_argument("--limit-check", action="store_true",
+                help="only check that a 429 renders inline (run the server with ORGMIND_LIMITS=on ORGMIND_LIMIT_CHAT_MESSAGES=1)")
 args = ap.parse_args()
 BASE, SHOTS = args.url.rstrip("/"), args.shots
 os.makedirs(SHOTS, exist_ok=True)
@@ -90,9 +92,36 @@ def overflow(page):
     return page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
 
 
+def limit_check(b):
+    """With a chat limit of 1/day: the second message shows the server's friendly 429 sentence inline."""
+    for width, label in ((1440, "desktop"), (400, "phone")):
+        page = b.new_page(viewport={"width": width, "height": 900})
+        page.goto(BASE)
+        page.wait_for_selector("#agent-cards .agent-card", timeout=120000)
+        new_chat(page)
+        page.fill("#message-input", "hello")
+        page.click("#send-btn")
+        page.wait_for_function("document.querySelector('.msg.notice') || "
+                               "document.querySelectorAll('.msg.assistant .bubble:not(.typing)').length > 0", timeout=60000)
+        if not page.locator(".msg.notice").count():
+            page.fill("#message-input", "and again")
+            page.click("#send-btn")
+            page.wait_for_selector(".msg.notice", timeout=60000)
+        note = page.text_content(".msg.notice")
+        step(f"[{label}] over the limit: friendly inline notice, no raw error",
+             "limit" in note and "429" not in note and page.input_value("#message-input") != "", note)
+        shot(page, f"limit_{label}_429_notice", full=False)
+        page.close()
+
+
 with sync_playwright() as p:
     chromium = shutil.which("chromium") or shutil.which("chromium-browser")
     b = p.chromium.launch(executable_path=chromium, args=["--no-sandbox"]) if chromium else p.chromium.launch()
+    if args.limit_check:
+        limit_check(b)
+        b.close()
+        print(f"\n{sum(ok for _, ok, _ in results)}/{len(results)} steps passed (screenshots: {SHOTS})")
+        sys.exit(0 if all(ok for _, ok, _ in results) else 1)
 
     # ================= desktop =================
     page = b.new_page(viewport={"width": 1440, "height": 900})

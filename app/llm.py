@@ -12,6 +12,7 @@ from typing import Callable, Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app import limits
 from app.tracing import llm_call
 
 T = TypeVar("T", bound=BaseModel)
@@ -38,6 +39,8 @@ def cosine(a: list[float], b: list[float]) -> float:
         return 0.0
     return sum(x * y for x, y in zip(a, b))  # vectors are stored normalized
 
+
+ANSWER_MAX_TOKENS = 2048  # answers are typically < 600 tokens; JSON envelope included
 
 OPERATIONS = {"AnswerOut": "answer", "AnswerWithDocsOut": "answer", "AnswerWithSkillsOut": "answer",
               "AnswerWithSkillsAndDocsOut": "answer", "SkillsOut": "extract_skills", "SummaryOut": "summarize", "PlaybookOut": "compile_playbook"}
@@ -91,7 +94,10 @@ class VertexLLM:
             response_schema=schema,
             temperature=0.0,
             thinking_config=types.ThinkingConfig(thinking_budget=1024 if think else 0),
+            # Bound chat answers (cost cap); other structured outputs keep the model default.
+            max_output_tokens=ANSWER_MAX_TOKENS if _operation(schema) == "answer" else None,
         )
+        limits.hit("gemini_calls")  # every real Gemini call counts; raises LimitExceeded over the daily ceiling
         with llm_call(_operation(schema), self._s.chat_model, _prompt_text(system, raw)) as info:
             resp = _retry(lambda: self._client.models.generate_content(
                 model=self._s.chat_model, contents=contents, config=config))
@@ -109,6 +115,7 @@ class VertexLLM:
         config = types.EmbedContentConfig(task_type=task_type, output_dimensionality=self._s.embed_dim)
         out = []
         for t in texts:  # gemini-embedding-001 on Vertex accepts one input per request
+            limits.hit("gemini_calls")
             with llm_call(f"embed:{task_type.lower()}", self._s.embed_model, t) as info:
                 resp = _retry(lambda: self._client.models.embed_content(
                     model=self._s.embed_model, contents=t, config=config))

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,7 +16,7 @@ from app.config import get_settings
 from app.distiller import DistillReport, distill
 from app.llm import get_llm
 from app.models import Agent, Employee, Message, Org, Playbook, RagDoc, Session, Skill, now
-from app import rag_docs, skills
+from app import limits, rag_docs, skills
 from app.rag import get_rag_provider
 from app.seed import ORG_ID, seed
 from app.store import get_store
@@ -42,6 +43,28 @@ TRACED = [("POST", re.compile(r"^/api/sessions/[^/]+/messages$"), "chat"),
           ("GET", re.compile(r"^/api/rag/docs$"), "rag_docs"),
           ("POST", re.compile(r"^/api/rag/search$"), "rag_search"),
           ("POST", re.compile(r"^/api/skills/extract$"), "skills_extract")]
+
+
+MAX_MESSAGE_CHARS = 2000
+MAX_SESSION_MESSAGES = 60
+
+
+@app.exception_handler(limits.LimitExceeded)
+async def limit_exceeded(_request: Request, exc: limits.LimitExceeded):
+    return JSONResponse(status_code=429, content=exc.payload())
+
+
+@app.middleware("http")
+async def limit_context(request: Request, call_next):
+    """Per-request limiter context: admin-token bypass and the (best-effort) client IP."""
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    token = limits.begin_request({k.lower(): v for k, v in request.headers.items()},
+                                 request.client.host if request.client else None)
+    try:
+        return await call_next(request)
+    finally:
+        limits.end_request(token)
 
 
 @app.middleware("http")
@@ -145,6 +168,7 @@ def list_sessions(employee_id: str | None = None, agent_id: str | None = None) -
 def create_session(body: NewSession) -> Session:
     _get_or_404(Employee, body.employee_id)
     agent = _get_or_404(Agent, body.agent_id)
+    limits.hit("sessions_created")
     session = Session(org_id=ORG_ID, employee_id=body.employee_id, agent_id=agent.id, agent_kind=agent.kind)
     get_store().put(session)
     return session
@@ -163,7 +187,13 @@ def post_message(session_id: str, body: NewMessage):
     store = get_store()
     session = _get_or_404(Session, session_id)
     agent = _get_or_404(Agent, session.agent_id)
+    if len(body.content) > MAX_MESSAGE_CHARS:
+        raise HTTPException(413, f"Messages can be at most {MAX_MESSAGE_CHARS} characters; this one has {len(body.content)}.")
     history = store.list_messages(session_id)
+    if len(history) >= MAX_SESSION_MESSAGES:
+        raise HTTPException(409, f"This chat has reached {MAX_SESSION_MESSAGES} messages. Please start a new chat.")
+    limits.ip_hit("chat_messages")
+    limits.hit("chat_messages")
 
     result = answer(agent, history, body.content, use_playbooks=body.use_playbooks,
                     use_rag=body.use_rag, employee_id=session.employee_id, use_skills=body.use_skills)
@@ -189,6 +219,9 @@ class DistillRequest(BaseModel):
 
 @app.post("/api/distill")
 def run_distill(body: DistillRequest | None = None) -> DistillReport:
+    limits.reserve_gemini(limits.distill_estimate(len(get_store().list(Session, org_id=ORG_ID))))
+    limits.ip_hit("distill")
+    limits.hit("distill")
     return distill(ORG_ID, body.agent_kind if body else None)
 
 
@@ -222,6 +255,8 @@ class CompareRequest(BaseModel):
 @app.post("/api/compare")
 def compare(body: CompareRequest):
     agent = _get_or_404(Agent, body.agent_id)
+    limits.reserve_gemini(limits.ESTIMATE["compare"])
+    limits.hit("compare")
     with ThreadPoolExecutor(max_workers=2) as pool:
         base = pool.submit(tracing.wrap(answer), agent, [], body.question, False)
         withpb = pool.submit(tracing.wrap(answer), agent, [], body.question, True)
@@ -270,6 +305,7 @@ async def upload_rag_doc(request: Request):
         rag_docs.check_capacity(ORG_ID)
     except rag_docs.CapacityError as e:
         raise HTTPException(429, str(e)) from None
+    limits.hit("rag_uploads")
     try:
         doc = await run_in_threadpool(rag_docs.upload, provider, ORG_ID, employee_id, title, filename, data)
     except rag_docs.UploadError as e:
@@ -325,6 +361,9 @@ class ExtractSkills(BaseModel):
 def extract_skills(body: ExtractSkills):
     session = _get_or_404(Session, body.session_id)
     _get_or_404(Employee, body.employee_id)
+    if session.employee_id == body.employee_id:  # don't spend quota on requests that will be refused anyway
+        limits.reserve_gemini(limits.ESTIMATE["skills_extract"])
+        limits.hit("skills_extract")
     found, stats = _skill_call(skills.extract, session, body.employee_id)
     return {"session_id": session.id, "skills": [_skill_payload(sk) for sk in found],
             "proposed": stats.proposed, "rejected": stats.rejected, "redacted": stats.redacted,
@@ -361,6 +400,19 @@ def archive_skill(skill_id: str, body: SkillAction):
 @app.patch("/api/skills/{skill_id}")
 def edit_skill(skill_id: str, body: SkillEdit):
     return _skill_payload(_skill_call(skills.edit, skill_id, body.employee_id, body.name, body.description, body.steps))
+
+
+def _require_admin(token: str) -> None:
+    if not get_settings().admin_token:
+        raise HTTPException(403, "admin endpoints are disabled (ORGMIND_ADMIN_TOKEN not set)")
+    if not limits.is_admin(token):
+        raise HTTPException(401, "invalid admin token")
+
+
+@app.get("/api/usage")
+def usage(x_admin_token: str = Header(default="")):
+    _require_admin(x_admin_token)
+    return limits.usage()
 
 
 @app.get("/api/traces")

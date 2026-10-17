@@ -22,6 +22,7 @@ RELATED = [
     "I want to count the rows in acme-analytics.events.orders from the command line.",
     "bq query says Syntax error: Unexpected \"-\" near the table name",
 ]
+RELATED_VAULT = "My staging deploy is failing with ACME_VAULT_TOKEN expired. How do I fix it?"
 UNRELATED = [
     "How do I make my Docker builds faster? pip reinstalls everything every time.",
     "My staging deploy is failing with ACME_VAULT_TOKEN expired. How do I fix it?",
@@ -35,6 +36,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
     args = ap.parse_args()
+    os.environ.setdefault("ORGMIND_LIMITS", "off")  # eval runs are not demo traffic
     os.environ.update({"ORGMIND_STORE": "memory", "ORGMIND_LLM": "vertex", "ORGMIND_RAG_PROVIDER": "off",
                        "ORGMIND_TRACING": "off"})
     if not os.getenv("GOOGLE_CLOUD_PROJECT"):
@@ -112,9 +114,23 @@ def main():
               f"{[len(f[0]['steps']) if f else 0 for f in runs]}; parameters "
               f"{[[p['name'] for p in f[0]['parameters']] if f else [] for f in runs]}")
 
+        # A chat where the agent only repeated playbook answers and the employee never confirmed anything
+        # (the Phase 3 over-trigger): must yield no skill.
+        from app.models import Message, Session
+        vault_twice = "ses_eval_vault_twice"
+        store.put(Session(id=vault_twice, org_id=ORG_ID, employee_id="e_dana", agent_id="a_dev", agent_kind="dev"))
+        pb_ids = [p["id"] for p in client.get("/api/playbooks?agent_kind=dev").json()]
+        pb_text = client.get(f"/api/playbooks/{pb_ids[0]}").json()["playbook"] if pb_ids else {"title": "", "steps": []}
+        pb_answer = f"Per the playbook *{pb_text['title']}*:\n" + "\n".join(f"{i}. {x}" for i, x in enumerate(pb_text["steps"], 1))
+        for role, text, cited in (("user", RELATED_VAULT, []), ("assistant", pb_answer, pb_ids[:1]),
+                                  ("user", RELATED_VAULT, []), ("assistant", pb_answer, pb_ids[:1])):
+            store.add_message(Message(session_id=vault_twice, role=role, content=text, cited_playbook_ids=cited))
+        owner[vault_twice] = "e_dana"
+
         # ---- 2/3. no-skill sessions ----
         for label, sid in (("[2] factual Q&A (PTO carryover)", pto), ("[3] unresolved (Tom, vault)", tom_vault),
-                           ("[3] unresolved (Priya, Kafka)", kafka)):
+                           ("[3] unresolved (Priya, Kafka)", kafka),
+                           ("[3] agent repeated playbook answers, no confirmation (Dana)", vault_twice)):
             counts = []
             for _ in range(args.runs):
                 res, _ = extract(sid)
