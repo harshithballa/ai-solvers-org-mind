@@ -262,8 +262,14 @@ async def upload_rag_doc(request: Request):
         except Exception as e:
             raise HTTPException(422, f"expected multipart or JSON {{employee_id, title, text}}: {e}") from None
         employee_id, title, data = body.employee_id, body.title, body.text.encode("utf-8")
+        if len(data) > rag_docs.MAX_TEXT_BYTES:
+            raise HTTPException(413, f"pasted text is {len(data) // 1024} KB; the limit is {rag_docs.MAX_TEXT_BYTES // 1024} KB")
         filename = f"{rag_docs.safe_filename(body.title)[:60] or 'note'}.txt"
     _get_or_404(Employee, employee_id)
+    try:
+        rag_docs.check_capacity(ORG_ID)
+    except rag_docs.CapacityError as e:
+        raise HTTPException(429, str(e)) from None
     try:
         doc = await run_in_threadpool(rag_docs.upload, provider, ORG_ID, employee_id, title, filename, data)
     except rag_docs.UploadError as e:

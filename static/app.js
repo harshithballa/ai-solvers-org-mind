@@ -22,6 +22,17 @@ const state = {
   sessionId: null,
   busy: false,
   health: {},
+  employeeId: "e_dana",
+  agentId: null,
+  sessions: [],
+  docs: [],
+  skills: [],
+  docSnippets: {},     // doc id -> last excerpt the agent used (this browser session)
+  docMode: "file",
+  docPoll: null,
+  editingSkill: null,
+  loadToken: 0,        // bumps on employee switch so stale responses are dropped
+  sessionMessages: 0,
 };
 
 // ---------------- helpers ----------------
@@ -125,12 +136,15 @@ async function loadOrg() {
 
   const agentOpts = org.agents.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
   $("#compare-agent").innerHTML = agentOpts;
-  $("#agent-select").innerHTML = agentOpts;
   const emps = [...org.employees].sort((a, b) => a.name.localeCompare(b.name));
   $("#employee-select").innerHTML = emps.map((e) =>
-    `<option value="${e.id}">${escapeHtml(e.name)} — ${escapeHtml(e.role)}</option>`).join("");
-  if (state.employees.e_dana) $("#employee-select").value = "e_dana";
+    `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("");
+  if (!state.employees[state.employeeId]) state.employeeId = emps[0]?.id;
+  $("#employee-select").value = state.employeeId;
+  if (!state.agents[state.agentId]) state.agentId = (org.agents.find((a) => a.kind === "dev") || org.agents[0])?.id;
   renderPresets();
+  renderAgents();
+  renderRagToggle();
 }
 
 // ---------------- compare ----------------
@@ -248,22 +262,74 @@ async function openPlaybook(id) {
   }
 }
 
-// ---------------- chat ----------------
+// ---------------- user workspace ----------------
 
-async function loadSessions() {
-  const emp = $("#employee-select").value, agent = $("#agent-select").value;
-  const list = await api(`/api/sessions?employee_id=${encodeURIComponent(emp)}&agent_id=${encodeURIComponent(agent)}`);
-  $("#session-list").innerHTML = list.length ? list.map((s) => `
-    <li data-session="${s.id}" class="${s.id === state.sessionId ? "active" : ""}">
-      ${escapeHtml(s.title)}<span class="when">${timeAgo(s.updated_at)}</span></li>`).join("")
-    : `<li class="muted small" style="cursor:default">No conversations yet.</li>`;
+const fmtDate = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+const fmtElapsed = (secs) => `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`;
+const initials = (name) => name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+const ragOn = () => state.health.rag && state.health.rag !== "off";
+const empId = () => state.employeeId;
+
+function citationChipsTyped({ playbooks = [], skills = [], docs = [] }) {
+  const chips = [
+    ...playbooks.map((c) => `<button class="chip cite pb" data-playbook="${escapeHtml(c.id)}"><span class="ci">◆</span> Playbook · ${escapeHtml(c.title)}${c.version > 1 ? ` · v${c.version}` : ""}</button>`),
+    ...skills.map((c) => `<button class="chip cite sk" data-skill="${escapeHtml(c.id)}"><span class="ci">⚙</span> Skill · ${escapeHtml(c.name)}</button>`),
+    ...docs.map((c) => `<button class="chip cite doc" data-doc="${escapeHtml(c.id)}"><span class="ci">▤</span> Doc · ${escapeHtml(c.title)}</button>`),
+  ];
+  return chips.length ? `<div class="chips">${chips.join("")}</div>` : "";
 }
 
-function renderMessage(m, cited) {
+function renderProfile() {
+  const e = state.employees[empId()];
+  if (!e) return;
+  $("#profile-avatar").textContent = initials(e.name);
+  $("#profile-avatar").style.background = e.avatar_color;
+  $("#profile-role").textContent = `${e.role} · ${e.team}`;
+  $("#stat-docs").textContent = state.docs.filter((d) => d.owner_employee_id === e.id).length;
+  $("#stat-skills").textContent = state.skills.filter((s) => s.owner_employee_id === e.id).length;
+  $("#stat-agents").textContent = Object.keys(state.agents).length;
+}
+
+function renderAgents() {
+  // Seed ties agents to a team but not employees to agents: every employee can use every agent.
+  $("#agent-cards").innerHTML = Object.values(state.agents).map((a) => {
+    const caps = ["Playbooks", "Skills", ...(ragOn() ? ["Documents"] : [])];
+    const sel = a.id === state.agentId;
+    return `<button class="agent-card ${sel ? "selected" : ""}" role="radio" aria-checked="${sel}" data-agent="${a.id}">
+      <span class="agent-icon ${a.kind}" aria-hidden="true">${a.kind === "dev" ? "&lt;/&gt;" : "♥"}</span>
+      <span class="agent-text"><b>${escapeHtml(a.name)}</b><span class="muted">${escapeHtml(a.description)}</span>
+        <span class="cap-chips">${caps.map((c) => `<span class="cap">${c}</span>`).join("")}</span></span>
+      <span class="radio" aria-hidden="true"></span></button>`;
+  }).join("");
+}
+
+async function loadSessions() {
+  const token = state.loadToken;
+  const list = await api(`/api/sessions?employee_id=${encodeURIComponent(empId())}&agent_id=${encodeURIComponent(state.agentId)}`);
+  if (token !== state.loadToken) return;
+  state.sessions = list;
+  $("#session-list").innerHTML = list.length ? list.map((s) => `
+    <li data-session="${s.id}" class="${s.id === state.sessionId ? "active" : ""}">
+      <span class="s-title">${escapeHtml(s.title)}</span>
+      <span class="when">${fmtDate(s.created_at)} · ${s.status === "closed" ? "Closed" : "Open"}</span></li>`).join("")
+    : `<li class="muted small empty">No chats yet with this agent.</li>`;
+  $("#session-select").innerHTML = `<option value="">${list.length ? "Select a chat…" : "No chats yet"}</option>` +
+    list.map((s) => `<option value="${s.id}" ${s.id === state.sessionId ? "selected" : ""}>${escapeHtml(s.title.slice(0, 60))} · ${fmtDate(s.created_at)}</option>`).join("");
+}
+
+function renderMessage(m, cites) {
   const div = document.createElement("div");
   div.className = `msg ${m.role}`;
-  const chips = cited ?? (m.cited_playbook_ids || []).map((id) => ({ id, title: state.playbooks[id]?.title || "Playbook", version: state.playbooks[id]?.version }));
-  div.innerHTML = `<div class="bubble">${md(m.content)}</div>${m.role === "assistant" ? citationChips(chips) : ""}`;
+  let chips = "";
+  if (m.role === "assistant") {
+    const c = cites || {
+      playbooks: (m.cited_playbook_ids || []).map((id) => ({ id, title: state.playbooks[id]?.title || "Playbook", version: state.playbooks[id]?.version })),
+      skills: (m.cited_skill_ids || []).map((id) => ({ id, name: state.skills.find((s) => s.id === id)?.name || "Skill" })),
+      docs: (m.cited_doc_ids || []).map((id) => ({ id, title: state.docs.find((d) => d.id === id)?.title || "Document" })),
+    };
+    chips = citationChipsTyped(c);
+  }
+  div.innerHTML = `<div class="bubble">${md(m.content)}</div>${chips}`;
   $("#messages").appendChild(div);
   $("#messages").scrollTop = $("#messages").scrollHeight;
   return div;
@@ -274,12 +340,21 @@ function enableComposer(on) {
   $("#send-btn").disabled = !on;
 }
 
+function renderChatHeader(session) {
+  const agent = state.agents[state.agentId];
+  $("#chat-title").innerHTML = session
+    ? `<b>${escapeHtml(agent?.name || "Agent")}</b> <span class="muted">· ${escapeHtml(session.title)}</span>`
+    : `<b>${escapeHtml(agent?.name || "Agent")}</b> <span class="muted">· select a chat or start a new one</span>`;
+  $("#learn-btn").hidden = !session;
+}
+
 async function openSession(id) {
   state.sessionId = id;
+  $("#learn-result").hidden = true;
   const { session, messages } = await api(`/api/sessions/${encodeURIComponent(id)}`);
-  const agent = state.agents[session.agent_id];
-  $("#chat-header").textContent = `${agent?.name || "Agent"} · ${empName(session.employee_id)} · ${session.title}`;
-  $("#messages").innerHTML = "";
+  state.sessionMessages = messages.length;
+  renderChatHeader(session);
+  $("#messages").innerHTML = messages.length ? "" : `<p class="muted empty-chat">Ask ${escapeHtml(state.agents[state.agentId]?.name || "the agent")} anything.</p>`;
   messages.forEach((m) => renderMessage(m));
   enableComposer(true);
   $("#message-input").focus();
@@ -287,8 +362,7 @@ async function openSession(id) {
 }
 
 async function newSession() {
-  const s = await api("/api/sessions", { method: "POST",
-    body: { employee_id: $("#employee-select").value, agent_id: $("#agent-select").value } });
+  const s = await api("/api/sessions", { method: "POST", body: { employee_id: empId(), agent_id: state.agentId } });
   await openSession(s.id);
 }
 
@@ -300,17 +374,23 @@ async function sendMessage(e) {
   state.busy = true;
   enableComposer(false);
   input.value = "";
+  $("#messages .empty-chat")?.remove();
   renderMessage({ role: "user", content });
   const typing = renderMessage({ role: "assistant", content: "_Thinking…_" });
   typing.querySelector(".bubble").classList.add("typing");
   try {
     const res = await api(`/api/sessions/${encodeURIComponent(state.sessionId)}/messages`, {
-      method: "POST", body: { content, use_playbooks: $("#use-playbooks").checked } });
+      method: "POST", body: { content, use_playbooks: $("#use-playbooks").checked,
+                              use_skills: $("#use-skills").checked, use_rag: $("#use-rag").checked } });
     typing.remove();
-    renderMessage(res.message, res.cited);
+    (res.rag?.retrieved || []).forEach((h) => { state.docSnippets[h.doc_id] = h.snippet; });
+    renderMessage(res.message, { playbooks: res.cited, skills: res.cited_skills || [], docs: res.cited_docs || [] });
+    if (res.rag?.error) toast(`Documents unavailable, answered without them (${res.rag.error})`, true);
+    if (res.skills?.error) toast(`Skills unavailable, answered without them (${res.skills.error})`, true);
+    state.sessionMessages += 2;
     await loadSessions();
-    const title = document.querySelector(`#session-list li[data-session="${state.sessionId}"]`)?.firstChild?.textContent.trim();
-    if (title) $("#chat-header").textContent = $("#chat-header").textContent.replace(/[^·]*$/, ` ${title}`);
+    const s = state.sessions.find((x) => x.id === state.sessionId);
+    if (s) renderChatHeader(s);
   } catch (err) {
     typing.remove();
     toast(err.message, true);
@@ -325,8 +405,250 @@ async function sendMessage(e) {
 function resetChat() {
   state.sessionId = null;
   $("#messages").innerHTML = "";
-  $("#chat-header").textContent = "Select or start a conversation";
+  $("#learn-result").hidden = true;
+  renderChatHeader(null);
   enableComposer(false);
+}
+
+async function learnSkills() {
+  const btn = $("#learn-btn");
+  const box = $("#learn-result");
+  setBusy(btn, true, "✦ Learning…");
+  box.hidden = true;
+  try {
+    const r = await api("/api/skills/extract", { method: "POST", body: { session_id: state.sessionId, employee_id: empId() } });
+    const n = r.skills.length;
+    box.className = `learn-result ${n ? "ok" : ""}`;
+    box.textContent = n ? `Learned ${n} skill${n > 1 ? "s" : ""} as draft: review ${n > 1 ? "them" : "it"} under My knowledge › Skills, then approve.`
+                        : "No reusable skill found in this chat.";
+    await loadSkills();
+    if (n) openKnowledge();
+  } catch (e) {
+    box.className = "learn-result warn";
+    box.textContent = e.status === 400 ? "This chat is too short to learn from yet (it needs at least 4 messages)." : e.message;
+  } finally {
+    box.hidden = false;
+    setBusy(btn, false, "✦ Learn skills from this chat");
+  }
+}
+
+// ---------- My knowledge: documents ----------
+
+async function loadDocs() {
+  if (!ragOn()) {
+    state.docs = [];
+    $("#doc-add-btn").hidden = true;
+    $("#doc-count").textContent = "0";
+    $("#doc-list").innerHTML = `<li class="muted small empty">Document upload is turned off on this server.</li>`;
+    renderProfile();
+    return;
+  }
+  const token = state.loadToken;
+  const list = await api(`/api/rag/docs?employee_id=${encodeURIComponent(empId())}`);
+  if (token !== state.loadToken) return;
+  state.docs = list;
+  const mine = list.filter((d) => d.owner_employee_id === empId());
+  $("#doc-count").textContent = mine.length;
+  const chip = (d) => {
+    if (d.status === "ready") return `<span class="st ready">Ready</span>`;
+    if (d.status === "failed") return `<span class="st failed" title="${escapeHtml(d.error || "")}">Failed</span>`;
+    return `<span class="st indexing">Indexing · <span class="elapsed" data-since="${d.created_at}">0:00</span></span>`;
+  };
+  $("#doc-list").innerHTML = mine.length ? mine.map((d) => `
+    <li data-doc="${d.id}" class="doc-item">
+      <span class="doc-icon ${d.mime_type === "application/pdf" ? "pdf" : ""}" aria-hidden="true">▤</span>
+      <span class="doc-main"><span class="doc-title">${escapeHtml(d.title)}</span>
+        <span class="muted small">Private · ${(d.size / 1024).toFixed(1)} KB · ${fmtDate(d.created_at)}</span></span>
+      ${chip(d)}</li>`).join("")
+    : `<li class="muted small empty">No documents yet.</li>`;
+  tickElapsed();
+  renderProfile();
+  clearTimeout(state.docPoll);
+  if (mine.some((d) => d.status === "indexing" || d.status === "uploading")) {
+    state.docPoll = setTimeout(() => loadDocs().catch(() => {}), 10000);
+  }
+}
+
+function tickElapsed() {
+  document.querySelectorAll(".elapsed[data-since]").forEach((el) => {
+    el.textContent = fmtElapsed(Math.max(0, (Date.now() - new Date(el.dataset.since).getTime()) / 1000));
+  });
+}
+
+function setDocMode(mode) {
+  document.querySelectorAll("[data-docmode]").forEach((b) => b.classList.toggle("active", b.dataset.docmode === mode));
+  document.querySelectorAll("[data-docpane]").forEach((p) => { p.hidden = p.dataset.docpane !== mode; });
+  state.docMode = mode;
+}
+
+async function submitDoc(e) {
+  e.preventDefault();
+  const err = $("#doc-error");
+  err.textContent = "";
+  const btn = $("#doc-submit");
+  let req;
+  if (state.docMode === "file") {
+    const f = $("#doc-file").files[0];
+    if (!f) { err.textContent = "Choose a file."; return; }
+    if (!/\.(txt|md|pdf)$/i.test(f.name)) { err.textContent = "Use a .txt, .md or .pdf file."; return; }
+    if (f.size > 5 * 1024 * 1024) { err.textContent = "The file is larger than 5 MB."; return; }
+    const fd = new FormData();
+    fd.append("employee_id", empId());
+    fd.append("file", f);
+    req = { method: "POST", body: fd };
+  } else {
+    const title = $("#doc-title").value.trim(), text = $("#doc-text").value;
+    if (!title || !text.trim()) { err.textContent = "Add a title and some text."; return; }
+    if (new Blob([text]).size > 200 * 1024) { err.textContent = "Pasted text is larger than 200 KB."; return; }
+    req = { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ employee_id: empId(), title, text }) };
+  }
+  setBusy(btn, true, "Uploading…");
+  try {
+    const res = await fetch("/api/rag/docs", req);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { const j = await res.json(); detail = typeof j.detail === "string" ? j.detail : j.detail?.message || detail; } catch {}
+      throw new Error(detail);
+    }
+    $("#doc-form").reset();
+    $("#doc-form").hidden = true;
+    toast("Uploaded. Indexing usually takes about a minute and a half.");
+    await loadDocs();
+  } catch (e2) {
+    err.textContent = e2.message;
+  } finally {
+    setBusy(btn, false, "Upload");
+  }
+}
+
+// ---------- My knowledge: skills ----------
+
+async function loadSkills() {
+  const token = state.loadToken;
+  const list = await api(`/api/skills?employee_id=${encodeURIComponent(empId())}`);
+  if (token !== state.loadToken) return;
+  state.skills = list;
+  const mine = list.filter((s) => s.owner_employee_id === empId());
+  $("#skill-count").textContent = mine.length;
+  $("#skill-list").innerHTML = mine.length ? mine.map(skillCard).join("")
+    : `<li class="muted small empty">No skills yet. Learn skills from a chat.</li>`;
+  renderProfile();
+}
+
+function skillCard(s) {
+  if (state.editingSkill === s.id) {
+    return `<li class="skill-card editing" data-skill-card="${s.id}">
+      <label class="field">Name<input type="text" class="ed-name" value="${escapeHtml(s.name)}"></label>
+      <label class="field">Description<input type="text" class="ed-desc" value="${escapeHtml(s.description)}"></label>
+      <label class="field">Steps (one per line)<textarea class="ed-steps" rows="5">${escapeHtml(s.steps.join("\n"))}</textarea></label>
+      <p class="error small ed-error"></p>
+      <div class="row end"><button class="btn ghost-light small" data-skill-act="cancel" data-id="${s.id}">Cancel</button>
+        <button class="btn primary small" data-skill-act="save" data-id="${s.id}">Save</button></div></li>`;
+  }
+  const trig = s.trigger.length > 140
+    ? `<span class="trig-short">${escapeHtml(s.trigger.slice(0, 140))}… <button class="btn link small" data-skill-act="more">show more</button></span><span class="trig-full" hidden>${escapeHtml(s.trigger)} <button class="btn link small" data-skill-act="less">show less</button></span>`
+    : escapeHtml(s.trigger);
+  const n = s.evidence.length;
+  return `<li class="skill-card" data-skill-card="${s.id}">
+    <div class="row between"><b class="sk-name">${escapeHtml(s.name)}</b><span class="st ${s.status}">${s.status[0].toUpperCase() + s.status.slice(1)}</span></div>
+    <p class="sk-desc">${escapeHtml(s.description)}</p>
+    <p class="small"><span class="muted">When to use:</span> ${trig}</p>
+    <ol class="sk-steps">${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
+    ${s.parameters.length ? `<p class="small"><span class="muted">Asks you for:</span> ${s.parameters.map((p) => `<code>${escapeHtml(p.name)}</code>`).join(" ")}</p>` : ""}
+    <p class="muted small">Based on ${n} message${n === 1 ? "" : "s"} · v${s.version}</p>
+    <div class="row sk-actions">
+      ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="edit" data-id="${s.id}">Edit</button>` : ""}
+      ${s.status === "draft" ? `<button class="btn primary small" data-skill-act="approve" data-id="${s.id}">Approve</button>` : ""}
+      ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="archive" data-id="${s.id}">Archive</button>` : ""}
+    </div></li>`;
+}
+
+async function skillAction(btn) {
+  const act = btn.dataset.skillAct, id = btn.dataset.id;
+  const card = btn.closest(".skill-card");
+  if (act === "more" || act === "less") {
+    card.querySelector(".trig-short").hidden = act === "more";
+    card.querySelector(".trig-full").hidden = act === "less";
+    return;
+  }
+  if (act === "edit") { state.editingSkill = id; return loadSkills(); }
+  if (act === "cancel") { state.editingSkill = null; return loadSkills(); }
+  try {
+    btn.disabled = true;
+    if (act === "save") {
+      const steps = card.querySelector(".ed-steps").value.split("\n").map((x) => x.trim()).filter(Boolean);
+      await api(`/api/skills/${id}`, { method: "PATCH", body: { employee_id: empId(), name: card.querySelector(".ed-name").value.trim(),
+        description: card.querySelector(".ed-desc").value.trim(), steps } });
+      state.editingSkill = null;
+      toast("Skill saved");
+    } else {
+      await api(`/api/skills/${id}/${act}`, { method: "POST", body: { employee_id: empId() } });
+      toast(act === "approve" ? "Skill approved: the agent can use it when Skills is on" : "Skill archived");
+    }
+    await loadSkills();
+  } catch (e) {
+    const errEl = card.querySelector(".ed-error");
+    if (errEl) errEl.textContent = e.message; else toast(e.message, true);
+    btn.disabled = false;
+  }
+}
+
+function openSkill(id) {
+  const s = state.skills.find((x) => x.id === id);
+  $("#modal").classList.remove("hidden");
+  if (!s) { $("#modal-body").innerHTML = `<p class="muted">This skill is no longer visible to ${escapeHtml(state.employees[empId()]?.name || "you")}.</p>`; return; }
+  $("#modal-body").innerHTML = `
+    <span class="tag sk">skill</span><span class="tag">${escapeHtml(s.status)}</span><span class="tag">v${s.version}</span>
+    <h2>${escapeHtml(s.name)}</h2>
+    <p>${escapeHtml(s.description)}</p>
+    <p><strong>When to use:</strong> ${escapeHtml(s.trigger)}</p>
+    <p><strong>Steps:</strong></p><ol>${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
+    ${s.parameters.length ? `<p><strong>Asks you for:</strong></p><ul>${s.parameters.map((p) => `<li><code>${escapeHtml(p.name)}</code>: ${escapeHtml(p.description)}</li>`).join("")}</ul>` : ""}
+    <p class="muted small">Learned from one of ${escapeHtml(state.employees[s.owner_employee_id]?.name || "")}'s chats, based on ${s.evidence.length} messages. Private to its owner.</p>`;
+}
+
+function openDoc(id) {
+  const d = state.docs.find((x) => x.id === id);
+  $("#modal").classList.remove("hidden");
+  if (!d) { $("#modal-body").innerHTML = `<p class="muted">This document is no longer visible.</p>`; return; }
+  const snippet = state.docSnippets[id];
+  $("#modal-body").innerHTML = `
+    <span class="tag doc">document</span><span class="tag">${escapeHtml(d.status)}</span><span class="tag">${d.scope === "org" ? "Shared with org" : "Private"}</span>
+    <h2>${escapeHtml(d.title)}</h2>
+    <p class="muted small">${escapeHtml(d.mime_type)} · ${(d.size / 1024).toFixed(1)} KB · uploaded ${fmtDate(d.created_at)} by ${escapeHtml(state.employees[d.owner_employee_id]?.name || d.owner_employee_id)}</p>
+    ${snippet ? `<p><strong>Excerpt the agent used:</strong></p><blockquote class="excerpt-quote">${escapeHtml(snippet)}</blockquote>`
+              : `<p class="muted small">Excerpts are shown for answers given in this browser session.</p>`}`;
+}
+
+function openKnowledge() {
+  const k = $("#knowledge");
+  k.classList.remove("collapsed-narrow");
+  $("#knowledge-toggle").setAttribute("aria-expanded", "true");
+}
+
+async function selectEmployee(id) {
+  state.employeeId = id;
+  state.loadToken++;
+  state.editingSkill = null;
+  clearTimeout(state.docPoll);
+  resetChat();
+  renderProfile();
+  await Promise.all([loadSessions(), loadDocs(), loadSkills()]);
+}
+
+async function selectAgent(id) {
+  state.agentId = id;
+  renderAgents();
+  resetChat();
+  await loadSessions();
+}
+
+function renderRagToggle() {
+  const on = ragOn();
+  $("#use-rag").disabled = !on;
+  $("#rag-toggle").classList.toggle("disabled", !on);
+  $("#rag-help").textContent = on ? "Answer only from my uploaded documents" : "Turned off on this server";
 }
 
 // ---------------- reset (admin) ----------------
@@ -344,9 +666,8 @@ async function confirmReset() {
     saveToken(token);
     $("#token-modal").classList.add("hidden");
     $("#distill-report").innerHTML = "";
-    resetChat();
     await loadOrg();
-    await Promise.all([loadPlaybooks(), loadSessions()]);
+    await Promise.all([loadPlaybooks(), selectEmployee(state.employeeId)]);
     toast("Demo data reset");
   } catch (e) {
     $("#token-error").textContent = e.status === 401 ? "Invalid admin token." : e.message;
@@ -418,41 +739,40 @@ function openDrawer() {
 
 // ---------------- routing ----------------
 
-const ROUTES = {
-  user: [
-    { id: "chat", label: "Chat" },
-    { id: "connections", label: "Connections", preview: true },
-    { id: "upload", label: "Upload", preview: true },
-  ],
-  admin: [
-    { id: "knowledge", label: "Knowledge" },
-    { id: "traces", label: "Traces" },
-    { id: "agents", label: "Agents", preview: true },
-    { id: "users", label: "Users & Teams", preview: true },
-    { id: "mcps", label: "MCPs", preview: true },
-    { id: "skills", label: "Skills & Sub-agents", preview: true },
-    { id: "guardrails", label: "Guardrails", preview: true },
-    { id: "roadmap", label: "Roadmap" },
-  ],
-};
-const DEFAULT_ROUTE = "#/admin/knowledge";
+const ADMIN_TABS = [
+  { id: "knowledge", label: "Knowledge" },
+  { id: "traces", label: "Traces" },
+  { id: "agents", label: "Agents", preview: true },
+  { id: "users", label: "Users & Teams", preview: true },
+  { id: "mcps", label: "MCPs", preview: true },
+  { id: "skills", label: "Skills & Sub-agents", preview: true },
+  { id: "guardrails", label: "Guardrails", preview: true },
+  { id: "roadmap", label: "Roadmap" },
+];
+const DEFAULT_ROUTE = "#/user";
 
 function parseRoute() {
-  const [, mode, tab] = (location.hash.match(/^#\/(user|admin)\/([a-z]+)/) || []);
-  if (mode && ROUTES[mode].some((r) => r.id === tab)) return { mode, tab };
+  if (/^#\/user(\/.*)?$/.test(location.hash)) return { mode: "user", tab: "home" };   // #/user/chat etc. still land here
+  const [, tab] = location.hash.match(/^#\/admin\/([a-z]+)/) || [];
+  if (ADMIN_TABS.some((t) => t.id === tab)) return { mode: "admin", tab };
   return null;
 }
 
 function route() {
   const r = parseRoute();
   if (!r) { history.replaceState(null, "", DEFAULT_ROUTE); return route(); }
+  if (r.mode === "user" && location.hash !== "#/user") history.replaceState(null, "", "#/user");
   const key = `${r.mode}-${r.tab}`;
-  document.querySelectorAll(".mode-switch a").forEach((a) => a.classList.toggle("active", a.dataset.mode === r.mode));
-  $("#subnav").innerHTML = ROUTES[r.mode].map((t) =>
-    `<a href="#/${r.mode}/${t.id}" class="${t.id === r.tab ? "active" : ""}">${escapeHtml(t.label)}${t.preview ? `<span class="nav-preview" title="Preview · planned">preview</span>` : ""}</a>`).join("");
+  const admin = r.mode === "admin";
+  document.body.classList.toggle("mode-admin", admin);
+  $("#admin-link").textContent = admin ? "← Your workspace" : "Admin ↗";
+  $("#admin-link").href = admin ? "#/user" : "#/admin/knowledge";
+  $("#subnav").hidden = !admin;
+  $("#subnav").innerHTML = admin ? ADMIN_TABS.map((t) =>
+    `<a href="#/admin/${t.id}" class="${t.id === r.tab ? "active" : ""}">${escapeHtml(t.label)}${t.preview ? `<span class="nav-preview" title="Preview · planned">preview</span>` : ""}</a>`).join("") : "";
   document.querySelectorAll(".page").forEach((p) => { p.hidden = p.id !== `page-${key}`; });
   if (window.OrgMindPreviews?.has(key)) window.OrgMindPreviews.render(key, state);
-  if (key === "user-chat") loadSessions().catch((e) => toast(e.message, true));
+  if (key === "user-home") selectEmployee(state.employeeId).catch((e) => toast(e.message, true));
   if (key === "admin-traces") {
     $("#cloud-trace-link").href = cloudTraceUrl() || "#";
     $("#cloud-trace-link").hidden = !cloudTraceUrl();
@@ -483,6 +803,16 @@ function initPanels() {
 document.addEventListener("click", (e) => {
   const pb = e.target.closest("[data-playbook]");
   if (pb) return openPlaybook(pb.dataset.playbook);
+  const sk = e.target.closest(".chip[data-skill]");
+  if (sk) return openSkill(sk.dataset.skill);
+  const doc = e.target.closest("[data-doc]");
+  if (doc) return openDoc(doc.dataset.doc);
+  const act = e.target.closest("[data-skill-act]");
+  if (act) { e.preventDefault(); return skillAction(act); }
+  const ag = e.target.closest("[data-agent]");
+  if (ag) return selectAgent(ag.dataset.agent).catch((err) => toast(err.message, true));
+  const mode = e.target.closest("[data-docmode]");
+  if (mode) return setDocMode(mode.dataset.docmode);
   const preset = e.target.closest("[data-q]");
   if (preset) { $("#compare-question").value = preset.dataset.q; return runCompare(); }
   const ses = e.target.closest("[data-session]");
@@ -500,8 +830,18 @@ $("#compare-agent").addEventListener("change", renderPresets);
 $("#distill-btn").addEventListener("click", runDistill);
 $("#composer").addEventListener("submit", sendMessage);
 $("#new-session-btn").addEventListener("click", () => newSession().catch((e) => toast(e.message, true)));
-$("#employee-select").addEventListener("change", () => { resetChat(); loadSessions(); });
-$("#agent-select").addEventListener("change", () => { resetChat(); loadSessions(); });
+$("#employee-select").addEventListener("change", (e) => selectEmployee(e.target.value).catch((err) => toast(err.message, true)));
+$("#session-select").addEventListener("change", (e) => { if (e.target.value) openSession(e.target.value).catch((err) => toast(err.message, true)); });
+$("#learn-btn").addEventListener("click", learnSkills);
+$("#doc-add-btn").addEventListener("click", () => { $("#doc-form").hidden = !$("#doc-form").hidden; $("#doc-error").textContent = ""; });
+$("#doc-cancel").addEventListener("click", () => { $("#doc-form").reset(); $("#doc-form").hidden = true; });
+$("#doc-form").addEventListener("submit", submitDoc);
+$("#knowledge-toggle").addEventListener("click", () => {
+  const k = $("#knowledge");
+  const collapsed = k.classList.toggle("collapsed-narrow");
+  $("#knowledge-toggle").setAttribute("aria-expanded", String(!collapsed));
+});
+setInterval(tickElapsed, 1000);
 $("#modal-close").addEventListener("click", () => $("#modal").classList.add("hidden"));
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); });
 $("#reset-btn").addEventListener("click", () => {

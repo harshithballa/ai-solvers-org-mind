@@ -25,9 +25,10 @@ together dies in their chat history. The next new hire gets the same generic (so
 5. **Observable.** Every request is traced in Cloud Trace, every Gemini call is visible in the in-app Traces view,
    and logs are correlated with traces in Cloud Logging.
 
-The app has two pages: **User** (Chat, plus previews of Connections and Upload) and **Admin** (Knowledge, Traces,
-Roadmap, plus previews of what comes next). Hash routes such as `#/admin/knowledge` and `#/user/chat` deep-link
-into any tab. All data is synthetic ("Acme Corp").
+The app opens on the **User** workspace (`#/user`): pick who you are viewing as (any seeded employee), choose an
+agent, chat with Playbooks / Skills / My documents toggles, and manage your documents and skills under *My knowledge*.
+**Admin** is a small header link (Knowledge, Traces, Roadmap, plus previews of what comes next); `#/admin/<tab>`
+deep-links into any admin tab. All data is synthetic ("Acme Corp").
 
 ## What's real vs planned
 
@@ -37,21 +38,25 @@ control on them is disabled, and they make no network calls.
 | Area | Item | Status |
 |---|---|---|
 | Users / Teams | Synthetic Acme employees, each with siloed sessions | ✅ Working now |
+| Users / Teams | User workspace: view as any employee, chat, My knowledge | ✅ Working now |
 | Users / Teams | Users & Teams admin, directory sync (*Admin › Users & Teams*) | 🔵 Next version (V2) |
 | Agents | Dev Agent and HR Agent on Gemini 2.5 Flash (Vertex AI) | ✅ Working now |
 | Agents | Playbook retrieval + citations in answers | ✅ Working now |
+| Agents | Document upload + RAG on Vertex AI Search, private to the uploader (*User › My knowledge*) | ✅ Working now |
 | Agents | Agent builder: create / edit agents (*Admin › Agents*) | 🔵 Next version (V2) |
 | Agents | MCP server registry (*Admin › MCPs*) | 🔵 Next version (V2) |
 | Agents | ADK on Vertex AI Agent Engine | 🟠 December round |
 | Agents | Task sub-agents that load skills (*Admin › Skills & Sub-agents*) | 🟠 December round |
-| Agents | MCP connections: Jenkins, GitHub, Drive, Slack (*User › Connections*) | 🟠 December round |
+| Agents | MCP connections: Jenkins, GitHub, Drive, Slack | 🟠 December round |
 | Distillation | Summarize → cluster across employees → compile playbooks | ✅ Working now |
 | Distillation | Only resolved sessions give steps; per-person values dropped | ✅ Working now |
 | Distillation | Traces: Cloud Trace + in-app trace view (*Admin › Traces*) | ✅ Working now |
-| Distillation | Upload local assistant sessions (*User › Upload*) | 🟣 V3 |
+| Distillation | Upload local assistant sessions | 🟣 V3 |
 | Distillation | PII redaction + review before publish (*Admin › Guardrails*) | 🟣 V3 |
 | Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
 | Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
+| Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private) | ✅ Working now |
+| Playbooks / Skills | Share docs and skills with the org, behind a PII guardrail | 🔵 Next version (V2) |
 | Playbooks / Skills | Skill creation from playbooks | 🟠 December round |
 
 ## Architecture
@@ -205,7 +210,7 @@ Three kinds of knowledge, kept distinct in code and docs:
   some unrelated noise, and Dana's BigQuery session (`ses_seed_14`, one employee working out a reusable procedure:
   the skill-extraction demo; it forms no cluster and no playbook).
 - Summaries, clusters and playbooks are always computed live by Gemini. Nothing is pre-baked.
-- **Reset demo** (top-right button, or `curl -X POST -H "X-Admin-Token: $ORGMIND_ADMIN_TOKEN" <url>/api/demo/reset`)
+- **Reset demo** (top-right button on Admin pages, or `curl -X POST -H "X-Admin-Token: $ORGMIND_ADMIN_TOKEN" <url>/api/demo/reset`)
   wipes sessions and playbooks and re-seeds.
 
 ## Deploy (Cloud Run)
@@ -223,7 +228,7 @@ The runtime service account needs `roles/aiplatform.user`, `roles/datastore.user
 
 ## Demo script (3–4 min)
 
-Before each take: **Reset demo** (top right, admin token). The app opens on **Admin › Knowledge** (Compare).
+Before each take: open **Admin** (header link), click **Reset demo** (top right, admin token). Start on **Admin › Knowledge** (Compare); the app itself opens on the User workspace.
 
 1. **The silo (Admin › Knowledge).** Pick *Dev Agent* and click the first preset, *"My staging deploy is failing
    with ACME_VAULT_TOKEN expired."* The left answer is generic, and Gemini often invents an `acme vault login`
@@ -241,7 +246,7 @@ Before each take: **Reset demo** (top right, admin token). The app opens on **Ad
    distilled from. Tom's unresolved session is flagged *not used for steps*.
 5. **No false matches.** Click the third preset (*"image not found in registry"*). It uses the same command but has
    a different error. The playbook is retrieved but **not** applied, so it cites nothing.
-6. **New hire (User › Chat, `#/user/chat`).** You're signed in as *Dana Kim (new hire)*. Start a conversation and ask
+6. **New hire (User workspace, `#/user`).** You're viewing as *Dana Kim (new hire)*. Turn on **Playbooks**, start a chat and ask
    about the vault error, then follow up with *"I ran acme auth refresh --vault on the VPN, but acme deploy staging
    still says vault permission denied. Which group do I need and how do I request access?"* The agent continues from
    the playbook's `staging-deployers` step.

@@ -36,9 +36,11 @@ with sync_playwright() as p:
     page = b.new_page(viewport={"width": 1440, "height": 900})
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text} @ {m.location.get('url')}") if m.type == "error" and "401" not in m.text else None)
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
-    page.goto(BASE); page.wait_for_selector("#compare-presets .chip", timeout=120000)
-    step("load: lands on Admin > Knowledge (compare)", page.url.endswith("#/admin/knowledge")
-         and page.is_visible("#page-admin-knowledge"), f"url={page.url} badge={page.text_content('#mode-badge')!r}")
+    page.goto(BASE); page.wait_for_selector("#agent-cards .agent-card", timeout=120000)
+    step("load: lands on the User workspace", page.url.endswith("#/user") and page.is_visible("#page-user-home"),
+         f"url={page.url} badge={page.text_content('#mode-badge')!r}")
+    page.click("#admin-link"); page.wait_for_selector("#compare-presets .chip", timeout=60000)
+    step("Admin link opens Admin > Knowledge (compare)", page.url.endswith("#/admin/knowledge"))
 
     # 0. reset: wrong token rejected, right token resets to seeded state
     page.click("#reset-btn"); page.fill("#token-input", "wrong"); page.click("#token-confirm")
@@ -92,8 +94,9 @@ with sync_playwright() as p:
          page.text_content("#playbook-citations")[:120])
 
     # 6. chat as Dana with Dev agent
-    page.click(".mode-switch a[data-mode=user]"); page.wait_for_selector("#page-user-chat:not([hidden])")
-    step("chat defaults to Dana", page.input_value("#employee-select") == "e_dana")
+    page.click("#admin-link"); page.wait_for_selector("#page-user-home:not([hidden])")
+    step("workspace defaults to Dana", page.input_value("#employee-select") == "e_dana")
+    page.check("#use-playbooks")  # toggles default off
     page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
     page.fill("#message-input", "Hi, I'm new. acme deploy staging fails with ACME_VAULT_TOKEN expired, what do I do?")
     page.click("#send-btn")
@@ -105,11 +108,12 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelectorAll('.msg.assistant .bubble:not(.typing)').length === 2", timeout=120000)
     last = page.locator(".msg.assistant .bubble").nth(1).text_content()
     step("follow-up uses session context", "staging-deployers" in last, last[:120].replace("\n", " "))
-    step("session appears in list", page.locator("#session-list li[data-session]").count() == 1)
+    step("session appears in list (plus Dana's seeded BigQuery chat)", page.locator("#session-list li[data-session]").count() == 2)
     page.screenshot(path=f"{SHOTS}/5_chat_dana.png")
 
     # 7. HR chat as Noah
-    page.select_option("#employee-select", "e_noah"); page.select_option("#agent-select", "a_hr")
+    page.select_option("#employee-select", "e_noah"); page.click("[data-agent=a_hr]")
+    page.wait_for_selector("[data-agent=a_hr].selected"); page.wait_for_timeout(500)
     page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
     page.fill("#message-input", "My home-office stipend claim got rejected with Missing cost center. Help?")
     page.click("#send-btn")
@@ -119,7 +123,7 @@ with sync_playwright() as p:
     page.screenshot(path=f"{SHOTS}/6_chat_noah_hr.png")
 
     # 8. open a seeded session (read history)
-    page.select_option("#employee-select", "e_priya"); page.select_option("#agent-select", "a_dev")
+    page.select_option("#employee-select", "e_priya"); page.click("[data-agent=a_dev]")
     page.wait_for_selector("#session-list li[data-session]")
     page.click("#session-list li[data-session] >> nth=0")
     page.wait_for_selector(".msg.user")
@@ -142,7 +146,7 @@ with sync_playwright() as p:
     page.screenshot(path=f"{SHOTS}/8_traces.png", full_page=True)
 
     # 10. narrow viewport sanity
-    page.set_viewport_size({"width": 400, "height": 900}); page.click(".mode-switch a[data-mode=admin]")
+    page.set_viewport_size({"width": 400, "height": 900}); page.evaluate("location.hash = '#/admin/knowledge'")
     page.wait_for_selector("#page-admin-knowledge:not([hidden])")
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     step("mobile width: no horizontal overflow", overflow <= 0, f"overflow={overflow}px")

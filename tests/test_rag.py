@@ -226,3 +226,14 @@ def test_min_score_threshold_is_configurable(fake, monkeypatch):
     monkeypatch.setattr(rag_docs, "get_settings", lambda: dataclasses.replace(get_settings(), rag_min_score=0.99))
     out, stats = rag_docs.search(fake, ORG_ID, "e_dana", "staging freeze window gym banana")
     assert out == [] and stats.below_score == 1 and doc["id"]
+
+
+def test_demo_caps_doc_count_and_pasted_text(fake, monkeypatch):
+    big = "x" * (rag_docs.MAX_TEXT_BYTES + 1)
+    res = client.post("/api/rag/docs", json={"employee_id": "e_dana", "title": "big", "text": big})
+    assert res.status_code == 413
+    monkeypatch.setattr(rag_docs, "MAX_DOCS_TOTAL", 2)
+    _upload("e_dana", "one", "first doc")
+    _upload("e_noah", "two", "second doc")
+    res = client.post("/api/rag/docs", json={"employee_id": "e_dana", "title": "three", "text": "third"})
+    assert res.status_code == 429 and "at most 2 documents" in res.json()["detail"]

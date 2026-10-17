@@ -19,39 +19,6 @@
       </div>`;
   }
 
-  // ---------------- User › Connections ----------------
-  const CONNECTORS = [
-    ["Jenkins", "Read build logs and job status so the Dev agent can diagnose a failing pipeline."],
-    ["GitHub", "Search repos, PRs and issues; link a playbook to the change that fixed the problem."],
-    ["Google Drive", "Ground the HR agent in policy documents (expense policy, handbook)."],
-    ["Slack", "Find answers already given in channels such as #platform-access and capture them as sessions."],
-  ];
-
-  function connections() {
-    const v = "December round";
-    return `<div class="panel">${header("Connections", v,
-      "Connect your tools to agents through MCP (Model Context Protocol) servers, so agents can read the systems where work happens. Nothing is connected in this version.")}
-      <div class="card-grid">${CONNECTORS.map(([name, what]) => `
-        <div class="connector">
-          <div class="row between"><strong>${esc(name)}</strong>${sample}</div>
-          <p class="muted small">${esc(what)}</p>
-          <div class="row between"><span class="status off">Not connected</span>${btn(v, "Connect", "btn primary small")}</div>
-        </div>`).join("")}</div></div>`;
-  }
-
-  // ---------------- User › Upload ----------------
-  function upload() {
-    const v = "V3";
-    return `<div class="panel">${header("Upload", v,
-      "Bring work done outside OrgMind into the distiller, so recurring problems solved in other tools also become playbooks.")}
-      ${planned(v, `<label class="dropzone disabled">
-        <input type="file" disabled multiple>
-        <strong>Drop session files here</strong>
-        <span>Import local assistant sessions (e.g. CLI chat logs) so they can be distilled</span>
-      </label>`)}
-      <div class="row end">${btn(v, "Upload and queue for distill")}</div></div>`;
-  }
-
   // ---------------- Admin › Agents ----------------
   function agents(state) {
     const v = "V2";
@@ -167,6 +134,7 @@
         <div class="arch-node">
           <h4>Users / Teams</h4>
           <ul>${item("now", "Synthetic Acme employees, each with siloed sessions")}
+              ${item("now", "User workspace: view as any employee, chat, My knowledge")}
               ${item("v2", "Users &amp; Teams admin, directory sync")}</ul>
         </div>
         <div class="arch-arrow" aria-hidden="true">→</div>
@@ -175,6 +143,7 @@
           <div class="arch-sub"><h5>Main agent</h5>
             <ul>${item("now", "Dev Agent, HR Agent (Gemini 2.5 Flash on Vertex AI)")}
                 ${item("now", "Playbook retrieval + citations")}
+                ${item("now", "Document upload + RAG on Vertex AI Search (private to the uploader)")}
                 ${item("v2", "Agent builder (create / edit agents)")}
                 ${item("dec", "ADK on Vertex AI Agent Engine")}</ul></div>
           <div class="arch-sub"><h5>Sub-agents</h5>
@@ -196,6 +165,8 @@
           <h4>Playbooks / Skills</h4>
           <ul>${item("now", "Playbooks with sources and versions")}
               ${item("now", "Compare: with vs without playbooks")}
+              ${item("now", "Skills learned from one employee's chat: review, approve, apply (private)")}
+              ${item("v2", "Share docs and skills with the org, behind a PII guardrail")}
               ${item("dec", "Skill creation from playbooks")}</ul>
         </div>
       </div>
@@ -204,7 +175,7 @@
   }
 
   const PAGES = {
-    "user-connections": connections, "user-upload": upload, "admin-agents": agents, "admin-users": users,
+    "admin-agents": agents, "admin-users": users,
     "admin-mcps": mcps, "admin-skills": skills, "admin-guardrails": guardrails, "admin-roadmap": roadmap,
   };
 

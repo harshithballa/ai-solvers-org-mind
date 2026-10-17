@@ -20,11 +20,23 @@ log = logging.getLogger("orgmind")
 
 ALLOWED = {".txt": "text/plain", ".md": "text/markdown", ".pdf": "application/pdf"}
 MAX_BYTES = 5 * 1024 * 1024
+MAX_TEXT_BYTES = 200 * 1024   # pasted text
+MAX_DOCS_TOTAL = 30           # public-demo safety cap across all employees
 SEARCH_PAGE_SIZE = 10
 
 
 class UploadError(ValueError):
     """Bad input: maps to HTTP 400."""
+
+
+class CapacityError(Exception):
+    """Demo document cap reached: maps to HTTP 429."""
+
+
+def check_capacity(org_id: str) -> None:
+    if len(get_store().list(RagDoc, org_id=org_id)) >= MAX_DOCS_TOTAL:
+        raise CapacityError(f"This demo holds at most {MAX_DOCS_TOTAL} documents and that limit is reached. "
+                            "Please try again later.")
 
 
 @dataclass

@@ -9,20 +9,15 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <span class="logo">◆</span> OrgMind <span class="org" id="org-name">Acme Corp</span>
-    </div>
-    <nav class="mode-switch" aria-label="Page">
-      <a href="#/user/chat" data-mode="user">User</a>
-      <a href="#/admin/knowledge" data-mode="admin">Admin</a>
-    </nav>
+    <a class="brand" href="#/user"><span class="logo">◆</span> OrgMind <span class="org" id="org-name">Acme Corp</span></a>
     <div class="topbar-right">
-      <span class="badge" id="mode-badge" title="LLM / store mode">…</span>
-      <button class="btn ghost small" id="trace-btn" title="Recent LLM calls">Trace</button>
-      <button class="btn ghost small" id="reset-btn" title="Reset demo data (admin)">Reset demo</button>
+      <span class="badge" id="mode-badge" title="Configured chat model · store">…</span>
+      <button class="btn ghost small" id="trace-btn" title="Recent LLM calls (links to Admin › Traces)">Trace</button>
+      <button class="btn ghost small admin-only" id="reset-btn" title="Reset demo data (admin)">Reset demo</button>
+      <a class="admin-link" id="admin-link" href="#/admin/knowledge">Admin ↗</a>
     </div>
   </header>
-  <nav class="subnav" id="subnav" aria-label="Tabs"></nav>
+  <nav class="subnav" id="subnav" aria-label="Admin tabs" hidden></nav>
 
   <main class="pages">
     <!-- ======================= ADMIN › KNOWLEDGE (real) ======================= -->
@@ -86,41 +81,100 @@
       </div>
     </section>
 
-    <!-- ======================= USER › CHAT (real) ======================= -->
-    <section class="page" id="page-user-chat" hidden>
-      <div class="split split-left">
-        <aside class="panel side-panel" id="chat-sidebar" data-collapsible="chat">
-          <div class="side-head">
-            <h2>Conversations</h2>
-            <button class="collapse-btn" aria-label="Collapse panel" title="Collapse">⟨</button>
+    <!-- ======================= USER (real) ======================= -->
+    <section class="page user-page" id="page-user-home" hidden>
+      <div class="ws-head">
+        <div>
+          <h1>Your AI workspace</h1>
+          <p class="muted">Ask your team's agents, ground them in your own documents, and keep the procedures you work out as skills.</p>
+        </div>
+        <div class="profile-card">
+          <div class="avatar" id="profile-avatar" aria-hidden="true">?</div>
+          <div class="profile-who">
+            <label class="viewing-as"><span class="muted small">Viewing as</span>
+              <select id="employee-select" aria-label="Viewing as"></select></label>
+            <div class="muted small" id="profile-role"></div>
           </div>
-          <div class="side-body">
-            <label class="field">Signed in as
-              <select id="employee-select"></select>
-            </label>
-            <label class="field">Agent
-              <select id="agent-select"></select>
-            </label>
-            <button class="btn primary block" id="new-session-btn">+ New conversation</button>
-            <ul class="session-list" id="session-list"></ul>
+          <div class="profile-stats">
+            <div><b id="stat-docs">0</b><span>documents</span></div>
+            <div><b id="stat-skills">0</b><span>skills</span></div>
+            <div><b id="stat-agents">0</b><span>agents</span></div>
           </div>
-          <button class="rail" aria-label="Expand Conversations">Conversations ⟩</button>
+        </div>
+      </div>
+
+      <h2 class="section-title">Choose an agent</h2>
+      <div class="agent-cards" id="agent-cards" role="radiogroup" aria-label="Agent"></div>
+
+      <div class="workspace">
+        <aside class="panel rail-panel" aria-label="Recent chats">
+          <h2>Recent chats</h2>
+          <button class="btn primary block" id="new-session-btn">+ New chat</button>
+          <select id="session-select" class="session-select" aria-label="Recent chats"></select>
+          <ul class="session-list" id="session-list"></ul>
         </aside>
-        <section class="panel chat">
-          <header class="chat-header" id="chat-header">Select or start a conversation</header>
+
+        <section class="panel chat" aria-label="Chat">
+          <header class="chat-header">
+            <div class="chat-title" id="chat-title">Select a chat or start a new one</div>
+            <button class="btn ghost-light small" id="learn-btn" hidden title="Extract reusable procedures from this conversation">✦ Learn skills from this chat</button>
+          </header>
+          <div class="learn-result" id="learn-result" hidden></div>
           <div class="messages" id="messages"></div>
+          <div class="toggles">
+            <label class="switch"><input type="checkbox" id="use-playbooks">
+              <span><b>Playbooks</b><small>Fixes distilled from colleagues' resolved chats</small></span></label>
+            <label class="switch"><input type="checkbox" id="use-skills">
+              <span><b>Skills</b><small>Procedures you approved from your own chats</small></span></label>
+            <label class="switch" id="rag-toggle"><input type="checkbox" id="use-rag">
+              <span><b>My documents</b><small id="rag-help">Answer only from my uploaded documents</small></span></label>
+          </div>
           <form class="composer" id="composer">
             <input id="message-input" type="text" placeholder="Message the agent…" autocomplete="off" disabled>
-            <label class="toggle" title="Let the agent use org playbooks"><input type="checkbox" id="use-playbooks" checked> playbooks</label>
             <button class="btn primary" id="send-btn" disabled>Send</button>
           </form>
         </section>
+
+        <aside class="panel knowledge collapsed-narrow" id="knowledge" aria-label="My knowledge">
+          <button class="knowledge-toggle" id="knowledge-toggle" aria-expanded="false">My knowledge <span aria-hidden="true">▾</span></button>
+          <div class="knowledge-body">
+            <div class="row between kn-head"><h2>My knowledge</h2><span class="muted small">Private to you</span></div>
+
+            <div class="kn-section">
+              <div class="row between"><h3>Documents <span class="count" id="doc-count">0</span></h3>
+                <button class="btn link" id="doc-add-btn">+ Add</button></div>
+              <form class="doc-form" id="doc-form" hidden>
+                <div class="seg" role="tablist">
+                  <button type="button" class="active" data-docmode="file" role="tab">Upload file</button>
+                  <button type="button" data-docmode="text" role="tab">Paste text</button>
+                </div>
+                <div data-docpane="file">
+                  <input type="file" id="doc-file" accept=".txt,.md,.pdf">
+                  <p class="muted small">.txt, .md or .pdf, up to 5 MB.</p>
+                </div>
+                <div data-docpane="text" hidden>
+                  <input type="text" id="doc-title" placeholder="Title" maxlength="120">
+                  <textarea id="doc-text" rows="5" placeholder="Paste text (up to 200 KB)"></textarea>
+                </div>
+                <p class="error small" id="doc-error"></p>
+                <div class="row end">
+                  <button type="button" class="btn ghost-light small" id="doc-cancel">Cancel</button>
+                  <button class="btn primary small" id="doc-submit">Upload</button>
+                </div>
+              </form>
+              <ul class="doc-list" id="doc-list"></ul>
+            </div>
+
+            <div class="kn-section">
+              <h3>Skills <span class="count" id="skill-count">0</span></h3>
+              <ul class="skill-list" id="skill-list"></ul>
+            </div>
+          </div>
+        </aside>
       </div>
     </section>
 
     <!-- ======================= PREVIEW PAGES (static, rendered by previews.js) ======================= -->
-    <section class="page preview-page" id="page-user-connections" hidden></section>
-    <section class="page preview-page" id="page-user-upload" hidden></section>
     <section class="page preview-page" id="page-admin-agents" hidden></section>
     <section class="page preview-page" id="page-admin-users" hidden></section>
     <section class="page preview-page" id="page-admin-mcps" hidden></section>
@@ -143,7 +197,7 @@
     <div id="drawer-body"></div>
   </aside>
 
-  <!-- playbook detail modal -->
+  <!-- detail modal (playbook / skill / document) -->
   <div class="modal hidden" id="modal" role="dialog" aria-modal="true">
     <div class="modal-card">
       <button class="modal-close" id="modal-close" aria-label="Close">×</button>

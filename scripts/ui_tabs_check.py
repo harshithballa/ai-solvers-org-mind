@@ -21,11 +21,12 @@ BASE = args.url.rstrip("/")
 os.makedirs(args.shots, exist_ok=True)
 
 ROUTES = {  # route -> is preview
-    "user/chat": False, "user/connections": True, "user/upload": True,
+    "user": False,
     "admin/knowledge": False, "admin/traces": False, "admin/agents": True, "admin/users": True,
     "admin/mcps": True, "admin/skills": True, "admin/guardrails": True, "admin/roadmap": False,
 }
-MUST_SAY_SAMPLE = {"user/connections", "admin/mcps"}
+MUST_SAY_SAMPLE = {"admin/mcps"}
+SECTION = {"user": "#page-user-home"}
 results = []
 
 
@@ -46,19 +47,21 @@ with sync_playwright() as p:
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(BASE + "/")
-        page.wait_for_selector("#compare-presets .chip", timeout=120000)
-        step(f"[{label}] default landing is #/admin/knowledge", page.url.endswith("#/admin/knowledge"), page.url)
+        page.wait_for_selector("#agent-cards .agent-card", timeout=120000)
+        step(f"[{label}] default landing is #/user", page.url.endswith("#/user"), page.url)
+        step(f"[{label}] no user preview tabs, admin tabs hidden on user page",
+             page.locator("#page-user-connections, #page-user-upload").count() == 0 and not page.is_visible("#subnav"))
         for route, preview in ROUTES.items():
             requests = []
             handler = lambda r: requests.append(r.url) if "/api/" in r.url else None
             page.on("request", handler)
             page.evaluate(f"location.hash = '#/{route}'")
-            sec = f"#page-{route.replace('/', '-')}"
+            sec = SECTION.get(route, f"#page-{route.replace('/', '-')}")
             page.wait_for_selector(f"{sec}:not([hidden])")
             page.wait_for_timeout(400)
             page.remove_listener("request", handler)
             visible = page.eval_on_selector_all(".page", "ps => ps.filter(p => !p.hidden).map(p => p.id)")
-            active = page.text_content(".subnav a.active") or ""
+            active = page.evaluate("(document.querySelector('.subnav a.active') || {}).textContent || ''")
             overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
             ok = visible == [sec[1:]] and overflow <= 0
             step(f"[{label}] {route} renders", ok, f"tab={active.strip()!r} overflow={overflow}px")
@@ -73,6 +76,11 @@ with sync_playwright() as p:
                 if route in MUST_SAY_SAMPLE:
                     n_sample = page.locator(f"{sec} .sample-tag").count()
                     step(f"[{label}] {route} sample rows labelled", n_sample >= 4, f"sample tags={n_sample}")
+        if label == "phone":
+            page.evaluate("location.hash = '#/user'"); page.wait_for_selector("#page-user-home:not([hidden])")
+            step("[phone] chat rail becomes a dropdown, My knowledge collapsible",
+                 page.is_visible("#session-select") and not page.is_visible("#session-list")
+                 and page.is_visible("#knowledge-toggle") and not page.is_visible("#doc-list"))
         # collapsible panels (desktop only: phone stacks them)
         if label == "desktop":
             page.evaluate("location.hash = '#/admin/knowledge'"); page.wait_for_selector("#page-admin-knowledge:not([hidden])")
@@ -82,15 +90,19 @@ with sync_playwright() as p:
             page.screenshot(path=f"{args.shots}/desktop_admin_knowledge_collapsed.png")
             page.click("#knowledge-panel .rail")
             step("[desktop] knowledge panel collapses -> compare widens", w_closed > w_open + 200, f"{w_open:.0f}px -> {w_closed:.0f}px")
-            page.evaluate("location.hash = '#/user/chat'"); page.wait_for_selector("#page-user-chat:not([hidden])")
-            page.click("#chat-sidebar .collapse-btn")
-            step("[desktop] chat sidebar collapses", page.is_visible("#chat-sidebar .rail"))
-            page.click("#chat-sidebar .rail")
+            page.evaluate("location.hash = '#/user'"); page.wait_for_selector("#page-user-home:not([hidden])")
+            boxes = [page.eval_on_selector(sel, "e => e.getBoundingClientRect().left") for sel in (".rail-panel", ".chat", "#knowledge")]
+            step("[desktop] user page: rail | chat | My knowledge side by side", boxes == sorted(boxes) and len(set(boxes)) == 3, f"{boxes}")
+            page.goto(BASE + "/#/user/chat"); page.wait_for_selector("#page-user-home:not([hidden])")
+            step("[desktop] old #/user/chat link lands on the workspace", page.url.endswith("#/user"))
             # deep link straight into a tab
             page.goto(BASE + "/#/admin/roadmap"); page.wait_for_selector("#page-admin-roadmap:not([hidden]) .legend")
             legend = page.text_content("#page-admin-roadmap .legend")
             step("[desktop] deep link #/admin/roadmap + legend", all(x in legend for x in
                  ("Working now", "Next version", "V3", "December round")), legend)
+            road = page.text_content("#page-admin-roadmap")
+            step("[desktop] roadmap: docs + skills real, sharing planned", all(x in road for x in
+                 ("Document upload + RAG", "Skills learned from one employee", "Share docs and skills with the org")))
             page.click("#trace-btn"); page.wait_for_selector("#trace-drawer:not([hidden])")
             step("[desktop] Trace drawer opens from top bar", True)
             page.keyboard.press("Escape")

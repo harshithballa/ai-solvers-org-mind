@@ -32,7 +32,8 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Thresholds: `ORGMIND_CLUSTER_THRESHOLD` (0.88) and `ORGMIND_RETRIEVAL_THRESHOLD` (0.62). Gemini embeddings put unrelated support chats at ~0.8, so clustering is complete-linkage. Tune with `scripts/eval_questions.py` against real Gemini (fake mode fails it by design).
 
 ## UI
-- Hash routes `#/user/<tab>` and `#/admin/<tab>`; default landing `#/admin/knowledge` (Compare). Vanilla HTML/JS/CSS, no build step.
+- Default landing is the User workspace `#/user` (one page: Viewing-as switcher, agent cards, chats, My knowledge). Admin is a header link to `#/admin/<tab>` (Knowledge/Compare, Traces, Roadmap, previews). Vanilla HTML/JS/CSS, no build step.
+- Every label must be true: capability chips and toggles only for what the code supports (Documents only when `ORGMIND_RAG_PROVIDER` is on); chat toggles default OFF.
 - Preview tabs (`static/previews.js`) must show the "Preview · planned" badge, keep every control disabled with a "Planned for …" tooltip, label sample rows "Sample", and make no network calls. Never show invented metrics.
 
 ## Observability
@@ -50,6 +51,6 @@ Priorities: the Dev agent flow and `/api/compare` come first. The HR flow is a b
 - Every LLM call that returns data uses Gemini structured output (`response_mime_type="application/json"` + `response_schema`). Don't parse free text with regexes.
 - Prompts live in `app/prompts.py`.
 - Run locally: `uvicorn app.main:app --reload --port 8080`. Tests: `pytest` (fake LLM + memory store). Dev deps: `requirements-dev.txt`; the image installs only `requirements.txt`.
-- Must stay green: `python -m pytest`; `scripts/skills_eval.py` (real Gemini); `scripts/rag_smoke.py --gemini` (real data store); `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
+- Must stay green: `python -m pytest`; `scripts/skills_eval.py` (real Gemini); `scripts/rag_smoke.py --gemini` (real data store); `scripts/eval_questions.py` (12/12 + leak + Kafka checks, real Gemini); `scripts/demo_flow.py` (headless browser flow); `scripts/user_flow.py` (User workspace, real Vertex + Gemini); `scripts/ui_tabs_check.py` (every tab at desktop + phone width, preview rules); `scripts/firestore_persistence_check.py` (uses the `orgmind-test` database, never `(default)`).
 - Firestore database is `ORGMIND_FIRESTORE_DATABASE` (default `(default)` = demo). Seeding happens on startup only when the store is empty.
 - Deploy: see README "Deploy (Cloud Run)" (keeps `--set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest` and `ORGMIND_TRACING=cloudtrace`).
