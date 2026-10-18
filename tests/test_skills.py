@@ -294,3 +294,14 @@ def test_transcript_marks_cited_agent_turns(fresh_store):
     sid = _vault_twice(fresh_store)
     text = format_numbered_transcript(fresh_store.list_messages(sid))
     assert "[1] AGENT (answering from org playbooks/documents):" in text and "[0] EMPLOYEE:" in text
+
+
+def test_skill_block_states_who_owns_the_skill():
+    from app.prompts import format_skills
+
+    sk = Skill(org_id=ORG_ID, owner_employee_id="e_dana", agent_kind="dev", name="Query BigQuery from CLI",
+               description="d", trigger="t", steps=["s"], source_session_id=BIGQUERY_SESSION_ID)
+    assert 'Introduce it as: "Using your skill *Query BigQuery from CLI*"' in format_skills([sk])
+    shared = format_skills([sk], {sk.id: "Dana Kim"})
+    assert 'Introduce it as: "Using Dana Kim\'s shared skill *Query BigQuery from CLI*"' in shared
+    assert "Using your skill" not in shared

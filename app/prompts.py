@@ -75,15 +75,16 @@ Rewrite it without them (use placeholders like `<your cost center>` where a valu
 DOC_CONTEXT = """
 ## Document excerpts
 The excerpts below come from documents uploaded to OrgMind that this employee is allowed to see.
-Answer ONLY from these excerpts and the playbooks above (if any). An excerpt that shares words with the question
+Answer ONLY from these excerpts and the playbooks and skills above (if any). An excerpt that shares words with the question
 may still be about something else: use it only if it actually answers the question.
 If they don't cover the question, or only cover part of it, say so clearly (e.g. "Your documents don't cover …")
 instead of filling the gap. This overrides any instruction above to give general guidance: do not add steps,
-commands, code or code blocks that are not in an excerpt or playbook, not even generic, well-known ones.
+commands, code or code blocks that are not in an excerpt, playbook or skill, not even generic, well-known ones.
 You may suggest who to ask.
-Never invent commands, channels, names, links or policies that are not written in an excerpt or playbook.
+Never invent commands, channels, names, links or policies that are not written in an excerpt, playbook or skill.
 When you use an excerpt, refer to its document by its title (never by any ID), and put that exact title in
-`used_doc_titles`.
+`used_doc_titles`. This also applies when you apply a skill: if an excerpt adds details for the same task (flags,
+settings, who to ask), include them and list that document's title.
 
 {docs}"""
 
@@ -145,12 +146,12 @@ SKILL_CONTEXT = """
 ## Skills you have learned
 These are procedures you worked out with this employee in earlier conversations. A skill matches if the request
 is about its task OR about an error or symptom its trigger or steps resolve. If one matches, apply its steps in
-order (they take priority over generic advice) and say which skill you are using, e.g. "Using your skill *<name>*",
-or for a skill shared by a colleague, "Using <colleague>'s shared skill *<name>*".
+order (they take priority over generic advice) and introduce it with the exact phrase given under the skill
+("Introduce it as: ..."). A skill shared by a colleague is theirs, never call it the employee's own.
 In the same reply: give all of the skill's steps (keep {{placeholders}} for values you don't know yet), then ask
 the employee for exactly the listed parameters you don't already know from this conversation. Don't hold the
 steps back while waiting for them, don't ask for anything else, and don't add steps, commands or flags that are
-not in the skill.
+not in the skill, except details from the playbooks or document excerpts you were given (cite those).
 Ignore skills that don't match the request. Put the IDs of skills you actually applied in `used_skill_ids`.
 
 {skills}"""
@@ -163,7 +164,9 @@ def format_skills(skills, shared_by: dict | None = None) -> str:
         who = (shared_by or {}).get(sk.id)
         steps = "\n".join(f"{i}. {s}" for i, s in enumerate(sk.steps, 1))
         params = "\n".join(f"- {{{p.name}}}: {p.description}" for p in sk.parameters) or "- (none)"
+        intro = f"Using {who}'s shared skill *{sk.name}*" if who else f"Using your skill *{sk.name}*"
         blocks.append(f"### [{sk.id}] {sk.name}\n" + (f"Shared with the org by {who} (a colleague's skill, not yours)\n" if who else "")
+                      + f"Introduce it as: \"{intro}\"\n"
                       + f"{sk.description}\nWhen to use: {sk.trigger}\n"
                       f"Steps:\n{steps}\nParameters to ask for:\n{params}")
     return "\n\n".join(blocks)
@@ -186,7 +189,7 @@ def format_numbered_transcript(messages) -> str:
 # reminder in the turn more reliably than the system-prompt rule alone (measured with scripts/rag_smoke.py).
 DOCS_ONLY_REMINDER = """
 
-(Answer only from the playbooks and document excerpts you were given. If they don't cover this, say so plainly and
+(Answer only from the playbooks, skills and document excerpts you were given. If they don't cover this, say so plainly and
 include no steps, commands, code, #channels or tool names of your own; you may suggest asking a team by its plain name.)"""
 
 
