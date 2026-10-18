@@ -53,7 +53,7 @@ with sync_playwright() as p:
 
     # 1. compare before distill
     page.click("#compare-presets .chip >> nth=0")
-    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Ask both'", timeout=120000)
+    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Compare answers'", timeout=120000)
     cites = page.locator("#playbook-citations .chip.cite").count()
     step("compare before distill: no citation", cites == 0, page.text_content("#playbook-citations")[:90])
     page.screenshot(path=f"{SHOTS}/1_compare_before.png")
@@ -72,7 +72,7 @@ with sync_playwright() as p:
 
     # 3. compare after distill
     page.click("#compare-presets .chip >> nth=0")
-    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Ask both'", timeout=120000)
+    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Compare answers'", timeout=120000)
     cites = page.locator("#playbook-citations .chip.cite").count()
     step("compare after distill: cites playbook", cites == 1, page.text_content("#playbook-citations")[:120])
     base_txt, pb_txt = page.text_content("#baseline-answer"), page.text_content("#playbook-answer")
@@ -89,7 +89,7 @@ with sync_playwright() as p:
 
     # 5. adversarial compare: similar wording, different issue
     page.click("#compare-presets .chip >> nth=2")
-    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Ask both'", timeout=120000)
+    page.wait_for_function("document.querySelector('#compare-btn').textContent === 'Compare answers'", timeout=120000)
     step("adversarial compare: no citation", page.locator("#playbook-citations .chip.cite").count() == 0,
          page.text_content("#playbook-citations")[:120])
 

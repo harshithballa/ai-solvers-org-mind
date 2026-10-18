@@ -30,7 +30,8 @@ const state = {
   docSnippets: {},     // doc id -> last excerpt the agent used (this browser session)
   docMode: "file",
   docPoll: null,
-  editingSkill: null,
+  editingSkill: null,  // skill id being edited in the detail drawer
+  showAllPlaybooks: false,
   loadToken: 0,        // bumps on employee switch so stale responses are dropped
   sessionMessages: 0,
 };
@@ -163,10 +164,28 @@ async function loadOrg() {
 
 // ---------------- compare ----------------
 
+const ARROW = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>`;
+
 function renderPresets() {
   const kind = state.agents[$("#compare-agent").value]?.kind || "dev";
   $("#compare-presets").innerHTML = (PRESETS[kind] || []).map((q) =>
-    `<button class="chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
+    `<button class="chip prompt-card" data-q="${escapeHtml(q)}"><span>${md(q).replace(/^<p>|<\/p>$/g, "")}</span>${ARROW}</button>`).join("");
+}
+
+function answerEmpty() {
+  return `<div class="answer-empty"><svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="12" y="8" width="26" height="30" rx="4"/><path d="M18 17h14M18 23h14M18 29h8"/></svg>
+    <p class="empty-title">Your answer will appear here</p>
+    <p class="muted small">Run a comparison to see how shared knowledge changes the result.</p></div>`;
+}
+
+const answerSkeleton = (label) => `<div class="skeleton" aria-busy="true"><span class="sr-only">${label}</span>
+  <span class="sk-line w90"></span><span class="sk-line w75"></span><span class="sk-line w85"></span><span class="sk-line w60"></span><span class="sk-line w80"></span></div>`;
+
+function resetCompare() {
+  $("#baseline-answer").innerHTML = $("#playbook-answer").innerHTML = answerEmpty();
+  $("#playbook-citations").innerHTML = "";
+  $("#playbook-citations").hidden = true;
 }
 
 async function runCompare() {
@@ -174,10 +193,13 @@ async function runCompare() {
   if (!question || state.busy) return;
   state.busy = true;
   const btn = $("#compare-btn");
-  setBusy(btn, true, "Asking…");
-  $("#baseline-answer").innerHTML = `<p class="typing">Thinking…</p>`;
-  $("#playbook-answer").innerHTML = `<p class="typing">Retrieving playbooks and thinking…</p>`;
+  setBusy(btn, true, "Comparing…");
+  const presets = document.querySelectorAll("#compare-presets button");
+  presets.forEach((b) => { b.disabled = true; });
+  $("#baseline-answer").innerHTML = answerSkeleton("Thinking…");
+  $("#playbook-answer").innerHTML = answerSkeleton("Retrieving playbooks and thinking…");
   $("#playbook-citations").innerHTML = "";
+  $("#playbook-citations").hidden = true;
   try {
     const res = await api("/api/compare", { method: "POST", body: { agent_id: $("#compare-agent").value, question } });
     $("#baseline-answer").innerHTML = md(res.baseline.answer);
@@ -188,28 +210,46 @@ async function runCompare() {
       : `<div class="muted">No playbook matched this question, so the agent answered on its own.</div>`;
     $("#playbook-citations").innerHTML =
       (wp.cited.length ? `<strong>Cited:</strong>${citationChips(wp.cited)}` : `<strong>Cited:</strong> none`) + retrieved;
+    $("#playbook-citations").hidden = false;
   } catch (e) {
     $("#baseline-answer").innerHTML = $("#playbook-answer").innerHTML =
       `<p class="${isFriendly(e) ? "limit-note" : "error"}">${escapeHtml(friendly(e))}</p>`;
   } finally {
     state.busy = false;
-    setBusy(btn, false, "Ask both");
+    setBusy(btn, false, "Compare answers");
+    presets.forEach((b) => { b.disabled = false; });
   }
 }
 
 // ---------------- playbooks + distill ----------------
 
+const PLAYBOOKS_SHOWN = 5;
+
 async function loadPlaybooks(flashIds = []) {
   const list = await api("/api/playbooks");
   state.playbooks = Object.fromEntries(list.map((p) => [p.id, p]));
-  $("#playbook-count").textContent = list.length;
-  $("#playbook-list").innerHTML = list.length ? list.map((p) => `
-    <li data-playbook="${p.id}" class="${flashIds.includes(p.id) ? "flash" : ""}">
-      <div class="pb-title">${escapeHtml(p.title)}</div>
-      <div class="pb-meta"><span class="tag ${p.agent_kind}">${p.agent_kind}</span>
-        v${p.version} · ${p.steps.length} steps · from ${p.source_employee_ids.length} employees</div>
-    </li>`).join("")
-    : `<li class="muted small" style="cursor:default;border-style:dashed">No playbooks yet. Click <b>Distill sessions</b>.</li>`;
+  const n = list.length, label = `${n} playbook${n === 1 ? "" : "s"}`;
+  $("#playbook-count").textContent = n;
+  $("#playbook-pill").textContent = label;
+  $("#rail-count").textContent = n ? label : "";
+  $("#playbook-ready").textContent = n ? `${label} ready` : "No playbooks yet";
+  $("#playbook-ready").classList.toggle("none", !n);
+  // Only the first five unless "View all" was clicked; fields the API doesn't return are left out.
+  const shown = state.showAllPlaybooks ? list : list.slice(0, PLAYBOOKS_SHOWN);
+  const meta = (p) => [
+    p.version != null ? `v${p.version}` : "",
+    p.steps ? `${p.steps.length} step${p.steps.length === 1 ? "" : "s"}` : "",
+    p.source_employee_ids ? `from ${p.source_employee_ids.length} employee${p.source_employee_ids.length === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" · ");
+  $("#playbook-list").innerHTML = n ? shown.map((p) => `
+    <li class="${flashIds.includes(p.id) ? "flash" : ""}"><button class="pb-card" data-playbook="${p.id}">
+      ${p.agent_kind ? `<span class="tag ${p.agent_kind}">${escapeHtml(p.agent_kind)}</span>` : ""}
+      <span class="pb-text"><span class="pb-title">${escapeHtml(p.title)}</span>
+        <span class="pb-meta">${meta(p)}</span></span></button></li>`).join("")
+    : `<li class="pb-empty muted small">No playbooks yet. Click <b>Distill sessions</b>.</li>`;
+  const more = n > PLAYBOOKS_SHOWN;
+  $("#playbook-all").hidden = !more;
+  $("#playbook-all").textContent = state.showAllPlaybooks ? "Show fewer" : `View all playbooks (${n})`;
 }
 
 function empName(id) { return state.employees[id]?.name || id; }
@@ -484,18 +524,12 @@ async function loadDocs() {
     if (d.status === "failed") return `<span class="st failed" title="${escapeHtml(d.error || "")}">Failed</span>`;
     return `<span class="st indexing">Indexing · <span class="elapsed" data-since="${d.created_at}">0:00</span></span>`;
   };
-  const docActions = (d) => {
-    if (d.scope === "org") return `<button class="btn ghost-light small" data-share-act="unshare" data-kind="doc" data-id="${d.id}">Unshare</button>`;
-    if (d.status !== "ready") return "";
-    if (d.mime_type === "application/pdf") return `<span class="muted small" title="PDFs can't be scanned yet">PDF: can't be shared yet</span>`;
-    return `<button class="btn ghost-light small" data-share-act="share" data-kind="doc" data-id="${d.id}">Share</button>`;
-  };
+  // Compact row: name, scope, status. Size, date and Share/Unshare live in the detail drawer (openDoc).
   $("#doc-list").innerHTML = mine.length ? mine.map((d) => `
-    <li data-doc="${d.id}" class="doc-item">
+    <li data-doc="${d.id}" class="doc-item" tabindex="0" aria-label="${escapeHtml(d.title)}: details">
       <span class="doc-icon ${d.mime_type === "application/pdf" ? "pdf" : ""}" aria-hidden="true">▤</span>
-      <span class="doc-main"><span class="doc-title">${escapeHtml(d.title)}</span>
-        <span class="muted small">${(d.size / 1024).toFixed(1)} KB · ${fmtDate(d.created_at)}</span>
-        <span class="row doc-actions">${scopeChip(d)}${docActions(d)}</span></span>
+      <span class="doc-main"><span class="doc-title" title="${escapeHtml(d.title)}">${escapeHtml(d.title)}</span>
+        <span class="row doc-actions">${scopeChip(d)}</span></span>
       ${chip(d)}</li>`).join("")
     : `<li class="muted small empty">No documents yet.</li>`;
   renderShared();
@@ -587,9 +621,9 @@ function renderShared() {
   $("#shared-count").textContent = docs.length + sks.length;
   const by = (x) => `<span class="muted small">Shared by ${escapeHtml(x.shared_by_name || state.employees[x.owner_employee_id]?.name || "a colleague")}</span>`;
   $("#shared-list").innerHTML = (docs.length || sks.length) ? [
-    ...sks.map((s) => `<li class="shared-item" data-skill-view="${s.id}"><span class="si-kind sk">Skill</span>
+    ...sks.map((s) => `<li class="shared-item" data-skill-view="${s.id}" tabindex="0"><span class="si-kind sk">Skill</span>
       <span class="doc-main"><span class="doc-title">${escapeHtml(s.name)}</span>${by(s)}</span><span class="scope org">Read-only</span></li>`),
-    ...docs.map((d) => `<li class="shared-item" data-doc="${d.id}"><span class="si-kind doc">Doc</span>
+    ...docs.map((d) => `<li class="shared-item" data-doc="${d.id}" tabindex="0"><span class="si-kind doc">Doc</span>
       <span class="doc-main"><span class="doc-title">${escapeHtml(d.title)}</span>${by(d)}</span>
       ${d.status === "ready" ? `<span class="scope org">Read-only</span>` : `<span class="st indexing">Indexing</span>`}</li>`),
   ].join("") : `<li class="muted small empty">Nothing shared by colleagues yet.</li>`;
@@ -599,12 +633,15 @@ async function shareAction(btn) {
   const act = btn.dataset.shareAct, kind = btn.dataset.kind, id = btn.dataset.id;
   const base = kind === "doc" ? `/api/rag/docs/${id}` : `/api/skills/${id}`;
   if (act === "unshare") {
+    const inDrawer = !!btn.closest("#modal");
     try {
       btn.disabled = true;
       await api(`${base}/unshare`, { method: "POST", body: { employee_id: empId() } });
       toast("Unshared: it's private again");
     } catch (e) { toast(friendly(e), true); }
-    return kind === "doc" ? loadDocs() : loadSkills();
+    await (kind === "doc" ? loadDocs() : loadSkills());
+    if (inDrawer && !$("#modal").classList.contains("hidden")) (kind === "doc" ? openDoc : openSkill)(id);
+    return;
   }
   const label = btn.textContent;
   setBusy(btn, true, act === "redacted" ? "Redacting…" : "Scanning…");
@@ -640,46 +677,34 @@ function showShareResult(kind, id, res, redacted) {
   $("#modal").classList.remove("hidden");
 }
 
+const cap = (x) => x[0].toUpperCase() + x.slice(1);
+
+// The owner's actions on a skill. The row shows at most two; the drawer shows all of them.
+function skillButtons(s, compact) {
+  const b = (attrs, label, primary) => `<button class="btn ${primary ? "primary" : "ghost-light"} small" ${attrs}>${label}</button>`;
+  const share = s.status === "active" && s.scope !== "org" ? b(`data-share-act="share" data-kind="skill" data-id="${s.id}"`, "Share") : "";
+  const unshare = s.scope === "org" ? b(`data-share-act="unshare" data-kind="skill" data-id="${s.id}"`, "Unshare") : "";
+  const edit = s.status !== "archived" ? b(`data-skill-act="edit" data-id="${s.id}"`, "Edit") : "";
+  const approve = s.status === "draft" ? b(`data-skill-act="approve" data-id="${s.id}"`, "Approve", true) : "";
+  const archive = s.status !== "archived" ? b(`data-skill-act="archive" data-id="${s.id}"`, "Archive") : "";
+  if (!compact) return [edit, approve, archive, share, unshare].join("");
+  return s.status === "draft" ? approve + archive : share + unshare + edit;
+}
+
+// Compact row: name, status, shared badge, two actions. Trigger, steps, parameters and the rest open in the drawer.
 function skillCard(s) {
-  if (state.editingSkill === s.id) {
-    return `<li class="skill-card editing" data-skill-card="${s.id}">
-      <label class="field">Name<input type="text" class="ed-name" value="${escapeHtml(s.name)}"></label>
-      <label class="field">Description<input type="text" class="ed-desc" value="${escapeHtml(s.description)}"></label>
-      <label class="field">Steps (one per line)<textarea class="ed-steps" rows="5">${escapeHtml(s.steps.join("\n"))}</textarea></label>
-      <p class="error small ed-error"></p>
-      <div class="row end"><button class="btn ghost-light small" data-skill-act="cancel" data-id="${s.id}">Cancel</button>
-        <button class="btn primary small" data-skill-act="save" data-id="${s.id}">Save</button></div></li>`;
-  }
-  const trig = s.trigger.length > 140
-    ? `<span class="trig-short">${escapeHtml(s.trigger.slice(0, 140))}… <button class="btn link small" data-skill-act="more">show more</button></span><span class="trig-full" hidden>${escapeHtml(s.trigger)} <button class="btn link small" data-skill-act="less">show less</button></span>`
-    : escapeHtml(s.trigger);
-  const n = s.evidence.length;
-  return `<li class="skill-card" data-skill-card="${s.id}">
-    <div class="row between"><b class="sk-name">${escapeHtml(s.name)}</b><span class="row">${scopeChip(s)}<span class="st ${s.status}">${s.status[0].toUpperCase() + s.status.slice(1)}</span></span></div>
-    <p class="sk-desc">${escapeHtml(s.description)}</p>
-    <p class="small"><span class="muted">When to use:</span> ${trig}</p>
-    <ol class="sk-steps">${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
-    ${s.parameters.length ? `<p class="small"><span class="muted">Asks you for:</span> ${s.parameters.map((p) => `<code>${escapeHtml(p.name)}</code>`).join(" ")}</p>` : ""}
-    <p class="muted small">Based on ${n} message${n === 1 ? "" : "s"} · v${s.version}</p>
-    <div class="row sk-actions">
-      ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="edit" data-id="${s.id}">Edit</button>` : ""}
-      ${s.status === "draft" ? `<button class="btn primary small" data-skill-act="approve" data-id="${s.id}">Approve</button>` : ""}
-      ${s.status !== "archived" ? `<button class="btn ghost-light small" data-skill-act="archive" data-id="${s.id}">Archive</button>` : ""}
-      ${s.status === "active" && s.scope !== "org" ? `<button class="btn ghost-light small" data-share-act="share" data-kind="skill" data-id="${s.id}">Share</button>` : ""}
-      ${s.scope === "org" ? `<button class="btn ghost-light small" data-share-act="unshare" data-kind="skill" data-id="${s.id}">Unshare</button>` : ""}
-    </div></li>`;
+  return `<li class="skill-card" data-skill-card="${s.id}" data-skill-view="${s.id}">
+    <div class="sk-line1"><button class="sk-name" data-skill-view="${s.id}" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</button>
+      <span class="st ${s.status}">${cap(s.status)}</span></div>
+    <div class="sk-line2">${scopeChip(s)}<span class="row sk-actions">${skillButtons(s, true)}</span></div></li>`;
 }
 
 async function skillAction(btn) {
   const act = btn.dataset.skillAct, id = btn.dataset.id;
   const card = btn.closest(".skill-card");
-  if (act === "more" || act === "less") {
-    card.querySelector(".trig-short").hidden = act === "more";
-    card.querySelector(".trig-full").hidden = act === "less";
-    return;
-  }
-  if (act === "edit") { state.editingSkill = id; return loadSkills(); }
-  if (act === "cancel") { state.editingSkill = null; return loadSkills(); }
+  if (act === "edit") { state.editingSkill = id; return openSkill(id); }
+  if (act === "cancel") { state.editingSkill = null; return openSkill(id); }
+  const inDrawer = !!btn.closest("#modal");
   try {
     btn.disabled = true;
     if (act === "save") {
@@ -693,8 +718,9 @@ async function skillAction(btn) {
       toast(act === "approve" ? "Skill approved: the agent can use it when Skills is on" : "Skill archived");
     }
     await loadSkills();
+    if (inDrawer) openSkill(id);
   } catch (e) {
-    const errEl = card.querySelector(".ed-error");
+    const errEl = card?.querySelector(".ed-error");
     if (errEl) errEl.textContent = e.message; else toast(e.message, true);
     btn.disabled = false;
   }
@@ -704,15 +730,30 @@ function openSkill(id) {
   const s = state.skills.find((x) => x.id === id);
   $("#modal").classList.remove("hidden");
   if (!s) { $("#modal-body").innerHTML = `<p class="muted">This skill is no longer visible to ${escapeHtml(state.employees[empId()]?.name || "you")}.</p>`; return; }
-  $("#modal-body").innerHTML = `
-    <span class="tag sk">skill</span><span class="tag">${escapeHtml(s.status)}</span><span class="tag">v${s.version}</span>
+  const mine = s.owner_employee_id === empId();
+  if (mine && state.editingSkill === s.id) {
+    $("#modal-body").innerHTML = `<div class="skill-card editing" data-skill-card="${s.id}">
+      <h2>Edit skill</h2>
+      <label class="field">Name<input type="text" class="ed-name" value="${escapeHtml(s.name)}"></label>
+      <label class="field">Description<input type="text" class="ed-desc" value="${escapeHtml(s.description)}"></label>
+      <label class="field">Steps (one per line)<textarea class="ed-steps" rows="8">${escapeHtml(s.steps.join("\n"))}</textarea></label>
+      <p class="error small ed-error"></p>
+      <div class="row end"><button class="btn ghost-light small" data-skill-act="cancel" data-id="${s.id}">Cancel</button>
+        <button class="btn primary small" data-skill-act="save" data-id="${s.id}">Save</button></div></div>`;
+    $("#modal-body .ed-name").focus();
+    return;
+  }
+  const n = s.evidence.length;
+  $("#modal-body").innerHTML = `<div class="skill-detail" data-skill-detail="${s.id}">
+    <span class="tag sk">skill</span><span class="tag">${escapeHtml(s.status)}</span><span class="tag">v${s.version}</span>${mine ? scopeChip(s) : ""}
     <h2>${escapeHtml(s.name)}</h2>
     <p>${escapeHtml(s.description)}</p>
     <p><strong>When to use:</strong> ${escapeHtml(s.trigger)}</p>
-    <p><strong>Steps:</strong></p><ol>${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
+    <p><strong>Steps:</strong></p><ol class="sk-steps">${s.steps.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, "")}</li>`).join("")}</ol>
     ${s.parameters.length ? `<p><strong>Asks you for:</strong></p><ul>${s.parameters.map((p) => `<li><code>${escapeHtml(p.name)}</code>: ${escapeHtml(p.description)}</li>`).join("")}</ul>` : ""}
-    <p class="muted small">Learned from one of ${escapeHtml(state.employees[s.owner_employee_id]?.name || "")}'s chats, based on ${s.evidence.length} messages.
-      ${s.scope === "org" ? `<b>Shared by ${escapeHtml(s.shared_by_name || state.employees[s.owner_employee_id]?.name || "")}</b> with the org (read-only for colleagues).` : "Private to its owner."}</p>`;
+    <p class="muted small">Learned from one of ${escapeHtml(state.employees[s.owner_employee_id]?.name || "")}'s chats. Based on ${n} message${n === 1 ? "" : "s"} · v${s.version}.
+      ${s.scope === "org" ? `<b>Shared by ${escapeHtml(s.shared_by_name || state.employees[s.owner_employee_id]?.name || "")}</b> with the org (read-only for colleagues).` : "Private to its owner."}</p>
+    ${mine && s.status !== "archived" ? `<div class="row drawer-actions">${skillButtons(s, false)}</div>` : ""}</div>`;
 }
 
 function openDoc(id) {
@@ -720,13 +761,25 @@ function openDoc(id) {
   $("#modal").classList.remove("hidden");
   if (!d) { $("#modal-body").innerHTML = `<p class="muted">This document is no longer visible.</p>`; return; }
   const snippet = state.docSnippets[id];
+  const mine = d.owner_employee_id === empId();
+  let act = "";
+  if (mine && d.scope === "org") act = `<button class="btn ghost-light small" data-share-act="unshare" data-kind="doc" data-id="${d.id}">Unshare</button>`;
+  else if (mine && d.status === "ready" && d.mime_type === "application/pdf") act = `<span class="muted small">PDFs can't be scanned yet, so this one can't be shared yet.</span>`;
+  else if (mine && d.status === "ready") act = `<button class="btn primary small" data-share-act="share" data-kind="doc" data-id="${d.id}">Share with org</button>`;
   $("#modal-body").innerHTML = `
     <span class="tag doc">document</span><span class="tag">${escapeHtml(d.status)}</span><span class="tag">${d.scope === "org" ? "Shared with org" : "Private"}</span>
     ${d.scope === "org" ? `<p class="small"><b>Shared by ${escapeHtml(d.shared_by_name || state.employees[d.owner_employee_id]?.name || "")}</b>${d.owner_employee_id !== empId() ? " (read-only)" : ""}</p>` : ""}
     <h2>${escapeHtml(d.title)}</h2>
     <p class="muted small">${escapeHtml(d.mime_type)} · ${(d.size / 1024).toFixed(1)} KB · uploaded ${fmtDate(d.created_at)} by ${escapeHtml(state.employees[d.owner_employee_id]?.name || d.owner_employee_id)}</p>
     ${snippet ? `<p><strong>Excerpt the agent used:</strong></p><blockquote class="excerpt-quote">${escapeHtml(snippet)}</blockquote>`
-              : `<p class="muted small">Excerpts are shown for answers given in this browser session.</p>`}`;
+              : `<p class="muted small">Excerpts are shown for answers given in this browser session.</p>`}
+    ${d.status === "failed" && d.error ? `<p class="error small">Indexing failed: ${escapeHtml(d.error)}</p>` : ""}
+    ${act ? `<div class="row drawer-actions">${act}</div>` : ""}`;
+}
+
+function closeModal() {
+  $("#modal").classList.add("hidden");
+  state.editingSkill = null;
 }
 
 function openKnowledge() {
@@ -932,6 +985,7 @@ function route() {
   const key = `${r.mode}-${r.tab}`;
   const admin = r.mode === "admin";
   document.body.classList.toggle("mode-admin", admin);
+  document.body.classList.toggle("mode-user", !admin);
   $("#admin-link").textContent = admin ? "← Your workspace" : "Admin ↗";
   $("#admin-link").href = admin ? "#/user" : "#/admin/knowledge";
   $("#subnav").hidden = !admin;
@@ -954,14 +1008,17 @@ function route() {
 function initPanels() {
   document.querySelectorAll("[data-collapsible]").forEach((panel) => {
     const key = `orgmind_panel_${panel.dataset.collapsible}`;
-    const set = (collapsed) => {
+    const set = (collapsed, persist = true) => {
       panel.classList.toggle("collapsed", collapsed);
       panel.closest(".split")?.classList.toggle("side-collapsed", collapsed);
-      try { localStorage.setItem(key, collapsed ? "1" : "0"); } catch {}
+      panel.querySelector(".collapse-btn").setAttribute("aria-expanded", String(!collapsed));
+      panel.querySelector(".rail").setAttribute("aria-expanded", String(!collapsed));
+      if (persist) try { localStorage.setItem(key, collapsed ? "1" : "0"); } catch {}
     };
     let saved = "0";
     try { saved = localStorage.getItem(key) || "0"; } catch {}
-    set(saved === "1");
+    // On phones the panel is a collapsible section under the comparison and starts closed.
+    if (matchMedia("(max-width: 699px)").matches) set(true, false); else set(saved === "1", false);
     panel.querySelector(".collapse-btn").addEventListener("click", () => set(true));
     panel.querySelector(".rail").addEventListener("click", () => set(false));
   });
@@ -972,6 +1029,8 @@ function initPanels() {
 document.addEventListener("click", (e) => {
   const share = e.target.closest("[data-share-act]");
   if (share) { e.preventDefault(); e.stopPropagation(); return shareAction(share); }
+  const act = e.target.closest("[data-skill-act]");
+  if (act) { e.preventDefault(); return skillAction(act); }
   const skv = e.target.closest("[data-skill-view]");
   if (skv) return openSkill(skv.dataset.skillView);
   const pb = e.target.closest("[data-playbook]");
@@ -980,14 +1039,12 @@ document.addEventListener("click", (e) => {
   if (sk) return openSkill(sk.dataset.skill);
   const doc = e.target.closest("[data-doc]");
   if (doc) return openDoc(doc.dataset.doc);
-  const act = e.target.closest("[data-skill-act]");
-  if (act) { e.preventDefault(); return skillAction(act); }
   const ag = e.target.closest("[data-agent]");
   if (ag) return selectAgent(ag.dataset.agent).catch((err) => toast(err.message, true));
   const mode = e.target.closest("[data-docmode]");
   if (mode) return setDocMode(mode.dataset.docmode);
   const preset = e.target.closest("[data-q]");
-  if (preset) { $("#compare-question").value = preset.dataset.q; return runCompare(); }
+  if (preset) { $("#compare-question").value = preset.dataset.q; $("#compare-question").focus(); return runCompare(); }
   const ses = e.target.closest("[data-session]");
   if (ses) return openSession(ses.dataset.session).catch((err) => toast(err.message, true));
 });
@@ -1002,6 +1059,7 @@ $("#compare-btn").addEventListener("click", runCompare);
 $("#compare-question").addEventListener("keydown", (e) => { if (e.key === "Enter") runCompare(); });
 $("#compare-agent").addEventListener("change", renderPresets);
 $("#distill-btn").addEventListener("click", runDistill);
+$("#playbook-all").addEventListener("click", () => { state.showAllPlaybooks = !state.showAllPlaybooks; loadPlaybooks().catch((e) => toast(e.message, true)); });
 $("#composer").addEventListener("submit", sendMessage);
 $("#new-session-btn").addEventListener("click", () => newSession().catch((e) => toast(e.message, true)));
 $("#employee-select").addEventListener("change", (e) => selectEmployee(e.target.value).catch((err) => toast(err.message, true)));
@@ -1016,8 +1074,8 @@ $("#knowledge-toggle").addEventListener("click", () => {
   $("#knowledge-toggle").setAttribute("aria-expanded", String(!collapsed));
 });
 setInterval(tickElapsed, 1000);
-$("#modal-close").addEventListener("click", () => $("#modal").classList.add("hidden"));
-$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").classList.add("hidden"); });
+$("#modal-close").addEventListener("click", closeModal);
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 $("#reset-btn").addEventListener("click", () => {
   $("#token-input").value = getToken();
   $("#token-error").textContent = "";
@@ -1028,11 +1086,16 @@ $("#token-cancel").addEventListener("click", () => $("#token-modal").classList.a
 $("#token-confirm").addEventListener("click", confirmReset);
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") confirmReset(); });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { $("#modal").classList.add("hidden"); $("#token-modal").classList.add("hidden"); $("#trace-drawer").hidden = true; }
+  // List rows that open a drawer are focusable; Enter/Space opens them like a click.
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches?.("li[tabindex][data-doc], li[tabindex][data-skill-view]")) {
+    e.preventDefault(); e.target.click(); return;
+  }
+  if (e.key === "Escape") { closeModal(); $("#token-modal").classList.add("hidden"); $("#trace-drawer").hidden = true; }
 });
 
 (async () => {
   initPanels();
+  resetCompare();
   try {
     await loadOrg();
     await loadPlaybooks();

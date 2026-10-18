@@ -24,33 +24,56 @@
     <section class="page" id="page-admin-knowledge" hidden>
       <div class="split split-right">
         <div class="split-main">
-          <div class="panel compare-input">
-            <h2>Same question, two agents</h2>
-            <p class="muted">Left: the agent alone. Right: the same agent with playbooks OrgMind distilled from other employees' sessions.</p>
-            <div class="row">
-              <select id="compare-agent" aria-label="Agent"></select>
-              <input id="compare-question" type="text" placeholder="Ask something an employee would ask…">
-              <button class="btn primary" id="compare-btn">Ask both</button>
+          <div class="kn-page-head">
+            <span class="kn-head-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5C4.5 4 8 4 12 6.5 16 4 19.5 4 22 5.5V19c-2.5-1.5-6-1.5-10 1-4-2.5-7.5-2.5-10-1z"/><path d="M12 6.5V20"/></svg></span>
+            <div class="kn-head-text">
+              <h1>Knowledge</h1>
+              <p class="muted">Compare agent answers with and without shared playbooks.</p>
             </div>
-            <div class="chips" id="compare-presets"></div>
+            <span class="ready-badge none" id="playbook-ready">No playbooks yet</span>
           </div>
+
+          <div class="panel compare-input">
+            <h2 id="compare-heading">Ask a question and compare answers</h2>
+            <div class="compare-form">
+              <label class="field-inline"><span class="sr-only">Agent</span>
+                <select id="compare-agent" aria-label="Agent"></select></label>
+              <label class="field-inline grow"><span class="sr-only">Question</span>
+                <input id="compare-question" type="text" placeholder="Ask a question an employee would ask…" autocomplete="off"></label>
+              <button class="btn primary" id="compare-btn">Compare answers</button>
+            </div>
+            <p class="muted small examples-label" id="compare-examples-label">Try these examples:</p>
+            <div class="prompt-cards" id="compare-presets" aria-labelledby="compare-examples-label"></div>
+          </div>
+
           <div class="compare-grid">
-            <article class="panel answer-card">
-              <header><span class="dot grey"></span> Without playbooks <span class="muted">· siloed agent</span></header>
-              <div class="answer" id="baseline-answer"><p class="muted">Ask a question to compare.</p></div>
+            <article class="panel answer-card" aria-labelledby="baseline-title">
+              <header class="answer-head">
+                <span class="answer-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 13v1M15 13v1M9 17h6"/></svg></span>
+                <span class="answer-titles"><span class="answer-title-row"><h2 id="baseline-title">Agent only</h2><span class="mode-badge">No playbooks</span></span>
+                  <span class="muted small">Answer from the agent without OrgMind playbooks.</span></span>
+              </header>
+              <div class="answer" id="baseline-answer"></div>
             </article>
-            <article class="panel answer-card highlight">
-              <header><span class="dot green"></span> With OrgMind playbooks</header>
-              <div class="answer" id="playbook-answer"><p class="muted">Ask a question to compare.</p></div>
-              <footer class="citations" id="playbook-citations"></footer>
+            <article class="panel answer-card highlight" aria-labelledby="playbook-title">
+              <header class="answer-head">
+                <span class="answer-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5C4.5 4 8 4 12 6.5 16 4 19.5 4 22 5.5V19c-2.5-1.5-6-1.5-10 1-4-2.5-7.5-2.5-10-1z"/><path d="M12 6.5V20"/></svg></span>
+                <span class="answer-titles"><span class="answer-title-row"><h2 id="playbook-title">Agent + OrgMind</h2><span class="mode-badge on">Playbooks enabled</span></span>
+                  <span class="muted small">Answer from the same agent with OrgMind playbooks.</span></span>
+              </header>
+              <div class="answer" id="playbook-answer"></div>
+              <footer class="citations" id="playbook-citations" hidden></footer>
             </article>
           </div>
         </div>
 
-        <aside class="panel side-panel" id="knowledge-panel" data-collapsible="knowledge">
+        <aside class="panel side-panel" id="knowledge-panel" data-collapsible="knowledge" aria-label="Org knowledge">
           <div class="side-head">
             <h2>Org knowledge</h2>
-            <button class="collapse-btn" aria-label="Collapse panel" title="Collapse">⟩</button>
+            <span class="row">
+              <span class="pill" id="playbook-pill">0 playbooks</span>
+              <button class="collapse-btn" aria-label="Collapse Org knowledge" aria-expanded="true" title="Collapse"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="chev-side" d="M6 3l5 5-5 5"/><path class="chev-up" d="M3 10l5-5 5 5"/></svg></button>
+            </span>
           </div>
           <div class="side-body">
             <button class="btn primary block" id="distill-btn">Distill sessions</button>
@@ -58,8 +81,9 @@
             <div id="distill-report"></div>
             <h3>Playbooks <span class="count" id="playbook-count">0</span></h3>
             <ul class="playbook-list" id="playbook-list"></ul>
+            <button class="btn ghost-light block view-all" id="playbook-all" hidden>View all playbooks</button>
           </div>
-          <button class="rail" aria-label="Expand Org knowledge">Org knowledge ⟨</button>
+          <button class="rail" aria-label="Expand Org knowledge" aria-expanded="false"><span>Org knowledge</span><span class="rail-count" id="rail-count"></span><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="chev-side" d="M10 3L5 8l5 5"/><path class="chev-down" d="M3 6l5 5 5-5"/></svg></button>
         </aside>
       </div>
     </section>

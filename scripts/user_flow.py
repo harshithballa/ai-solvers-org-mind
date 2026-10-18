@@ -93,6 +93,12 @@ def close_modal(page):
     page.wait_for_selector("#modal.hidden", state="attached")
 
 
+def open_row(page, row):
+    """Rows in My knowledge are compact; details and the full actions open in the drawer."""
+    row.click()
+    page.wait_for_selector("#modal:not(.hidden) #modal-body h2")
+
+
 def overflow(page):
     return page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
 
@@ -245,14 +251,14 @@ with sync_playwright() as p:
     step("learn skills from Dana's BigQuery chat -> 1 draft", lr.startswith("Learned 1 skill"), lr)
     card = page.locator(".skill-card", has=page.locator(".st.draft")).first
     card.wait_for()
-    ctext = card.text_content()
-    step("skill card: name, steps, parameter names, evidence, no personal value",
-         "Based on" in ctext and card.locator(".sk-steps li").count() >= 1 and card.locator("code").count() >= 1
-         and "acme-sbx-dkim-4821" not in ctext, ctext[:120].replace("\n", " "))
-    if card.locator("[data-skill-act=more]").count():
-        card.locator("[data-skill-act=more]").click()
-        step("long trigger expands with show more", card.locator(".trig-full").is_visible())
-    shot(page, "d07_skill_draft")
+    open_row(page, card.locator(".sk-name"))
+    detail = page.locator("#modal-body .skill-detail")
+    ctext = detail.text_content()
+    step("skill drawer: name, steps, parameter names, evidence, no personal value",
+         "Based on" in ctext and detail.locator(".sk-steps li").count() >= 1 and detail.locator("code").count() >= 1
+         and "acme-sbx-dkim-4821" not in ctext + card.text_content(), ctext[:120].replace("\n", " "))
+    shot(page, "d07_skill_draft", full=False)
+    close_modal(page)
     card.locator("[data-skill-act=approve]").click()
     page.wait_for_selector(".skill-card .st.active")
     skill_name = page.locator(".skill-card:has(.st.active) .sk-name").first.text_content()
@@ -284,8 +290,9 @@ with sync_playwright() as p:
     card.locator("[data-skill-act=edit]").click()
     page.fill(".skill-card.editing .ed-desc", "Run a BigQuery query on the Acme analytics dataset from the CLI.")
     page.click(".skill-card.editing [data-skill-act=save]")
-    page.wait_for_selector(".skill-card:has(.st.active) >> text=v2")
+    page.wait_for_selector("#modal-body .skill-detail .tag >> text=v2")
     step("edit skill: saved, version bumped", True)
+    close_modal(page)
 
     # ---- share to org (guardrail) ----
     def share_result(btn):
@@ -294,19 +301,23 @@ with sync_playwright() as p:
         return page.get_attribute(".share-result", "data-verdict"), page.text_content("#modal-body")
 
     doc_item = page.locator(".doc-item", has_text=DOC_NAME[:-4])
-    verdict, text = share_result(doc_item.locator("[data-share-act=share]"))
+    open_row(page, doc_item)
+    verdict, text = share_result(page.locator("#modal-body [data-share-act=share]"))
     step("share clean doc: 'Shared with your org'", verdict == "clean" and "Shared with your org" in text, verdict)
     shot(page, "d10_share_doc_clean", full=False)
     close_modal(page)
     page.wait_for_selector(f".doc-item:has-text('{DOC_NAME[:-4]}') .scope.org")
-    step("doc shows 'Shared with org' chip and Unshare", doc_item.locator("[data-share-act=unshare]").count() == 1)
+    open_row(page, doc_item)
+    step("doc shows 'Shared with org' chip and Unshare", page.locator("#modal-body [data-share-act=unshare]").count() == 1)
+    close_modal(page)
     card = page.locator(".skill-card:has(.st.active)").first
     verdict, text = share_result(card.locator("[data-share-act=share]"))
     step("share active skill: clean", verdict == "clean", text[:80])
     close_modal(page)
 
     pii = page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)")
-    verdict, text = share_result(pii.locator("[data-share-act=share]"))
+    open_row(page, pii)
+    verdict, text = share_result(page.locator("#modal-body [data-share-act=share]"))
     step("share doc with email + phone: Blocked, masked previews only",
          verdict == "blocked" and "EMAIL" in text and "PHONE" in text and "priyanka.rao.home" not in text
          and "98450" not in text and "p***@g***.com" in text, text[:160].replace("\n", " "))
@@ -325,6 +336,7 @@ with sync_playwright() as p:
     page.click(".skill-card.editing [data-skill-act=save]")
     page.wait_for_selector(".toast:not(.hidden)")
     toast_text = page.text_content("#toast")
+    close_modal(page)
     card = page.locator(".skill-card:has(.st.active)").first
     step("editing a shared skill makes it private again (and says so)",
          "private again" in toast_text and card.locator(".scope.org").count() == 0, toast_text)
@@ -405,7 +417,8 @@ with sync_playwright() as p:
          page.get_attribute(".share-result", "data-verdict") == "clean")
     shot(page, "p04_share_clean", full=False)
     close_modal(page)
-    page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)").locator("[data-share-act=share]").click()
+    open_row(page, page.locator(".doc-item").filter(has_text=PII_TITLE).filter(has_not_text="(redacted)"))
+    page.locator("#modal-body [data-share-act=share]").click()
     page.wait_for_selector("#modal:not(.hidden) .share-result", timeout=120000)
     txt = page.text_content("#modal-body")
     step("phone: blocked dialog with masked findings and redacted-copy button",
