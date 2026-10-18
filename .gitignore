@@ -23,3 +23,6 @@ application_default_credentials.json
 .DS_Store
 .idea/
 .vscode/
+
+# Local screenshots (UI checks)
+shots/
