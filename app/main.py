@@ -117,7 +117,7 @@ def health():
     s = get_settings()
     return {"ok": True, "store": s.store, "llm": get_llm().mode, "chat_model": s.chat_model, "rag": s.rag_provider,
             "cluster_threshold": s.cluster_threshold, "retrieval_threshold": s.retrieval_threshold,
-            "tracing": s.tracing, "project": s.project or None}
+            "tracing": s.tracing, "limits": "off" if s.limits == "off" else "on", "project": s.project or None}
 
 
 @app.get("/api/org")

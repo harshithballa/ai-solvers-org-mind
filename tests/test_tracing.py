@@ -17,6 +17,7 @@ def _calls(limit=50):
 
 def test_tracing_is_off_in_unit_tests():
     assert client.get("/api/health").json()["tracing"] == "off"
+    assert client.get("/api/health").json()["limits"] == "off"   # conftest sets ORGMIND_LIMITS=off
     assert tracing._provider is None
     assert client.get("/api/traces").json()["tracing"] == "off"
 
