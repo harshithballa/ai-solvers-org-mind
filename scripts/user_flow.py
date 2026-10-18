@@ -5,7 +5,8 @@
 Run a FRESHLY STARTED server with ORGMIND_STORE=memory (never production data), ORGMIND_LLM=vertex,
 ORGMIND_RAG_PROVIDER=vertex, ORGMIND_LIMITS=off (the flow refuses to run on a server with leftover state).
 Uploads one "test-" document per run (purge with `python -m scripts.purge_test_docs --yes`).
-Desktop pass: default route, Viewing-as switcher, chat with each toggle, upload -> Indexing -> Ready, RAG citation,
+Desktop pass: default route, Viewing-as switcher, lazy chat creation (empty state, no session until Send, closed
+chat starts a new one, create failure keeps the text), chat with each toggle, upload -> Indexing -> Ready, RAG citation,
 learn skills from Dana's BigQuery chat, approve, skill citation, Priya can't see or use it, edit. Phone pass: layout +
 skill citation.
 """
@@ -77,8 +78,15 @@ def ask(page, text, toggles):
 
 
 def new_chat(page):
+    """+ New chat; the input is always enabled now, so wait for the new session to be the active one."""
+    before = page.get_attribute("#messages", "data-active-session") or ""
     page.click("#new-session-btn")
-    page.wait_for_function("!document.querySelector('#message-input').disabled", timeout=30000)
+    page.wait_for_function("b => { const s = document.querySelector('#messages').dataset.activeSession; "
+                           "return s && s !== b; }", arg=before, timeout=30000)
+
+
+def n_sessions(emp):
+    return len(api(f"/api/sessions?employee_id={emp}"))
 
 
 def switch(page, emp):
@@ -168,10 +176,55 @@ with sync_playwright() as p:
     shot(page, "d02_viewing_as_priya")
     switch(page, "e_dana")
 
-    # chat: no toggles, then playbooks (after distill)
-    new_chat(page)
+    # lazy chat creation: the input works before any chat exists; a session is created only on Send
+    before = {e: n_sessions(e) for e in ("e_dana", "e_priya")}
+    step("first load: input enabled with no chat selected, no session created",
+         page.is_enabled("#message-input") and page.is_enabled("#send-btn")
+         and not page.get_attribute("#messages", "data-active-session")
+         and page.locator("#session-list li.active").count() == 0, f"placeholder={page.get_attribute('#message-input', 'placeholder')!r}")
+    examples = page.locator("#messages .chat-empty [data-example]")
+    step("empty state: title, tip and the agent's example questions",
+         page.text_content("#messages .chat-empty .empty-title") == "Ask the Dev Agent anything"
+         and "Tip: use the toggles below" in page.text_content("#messages .chat-empty") and 2 <= examples.count() <= 3,
+         f"{examples.count()} examples")
+    examples.first.click()
+    page.wait_for_timeout(800)
+    step("example card fills + focuses the input, does not send",
+         page.input_value("#message-input") == examples.first.get_attribute("data-example")
+         and page.evaluate("document.activeElement.id") == "message-input" and page.locator(".msg").count() == 0)
+    shot(page, "d02b_empty_state", full=False)
+    page.fill("#message-input", "")
+    page.click("[data-agent=a_hr]"); page.wait_for_selector("[data-agent=a_hr].selected"); page.wait_for_timeout(800)
+    hr_ok = page.is_enabled("#message-input") and page.text_content("#messages .empty-title") == "Ask the HR Agent anything"
+    page.click("[data-agent=a_dev]"); page.wait_for_selector("[data-agent=a_dev].selected")
+    switch(page, "e_priya")
+    priya_ok = page.is_enabled("#message-input")
+    switch(page, "e_dana")
+    step("switching agent and viewer keeps the input enabled and creates no session",
+         hr_ok and priya_ok and page.is_enabled("#message-input")
+         and {e: n_sessions(e) for e in before} == before, f"{before}")
+    # create-session failure (simulated 429): friendly notice, typed text kept, nothing created
+    n_err = len(errors)
+    page.route("**/api/sessions", lambda r: r.fulfill(status=429, content_type="application/json",
+               body=json.dumps({"detail": "Today's demo limit for new chats is reached. It resets at 00:00 UTC.",
+                                "limit": "sessions_created"})) if r.request.method == "POST" else r.continue_())
+    page.fill("#message-input", VAULT_Q)
+    page.click("#send-btn")
+    page.wait_for_selector(".msg.notice", timeout=30000)
+    step("create-session failure: friendly notice, typed text stays, no session",
+         page.input_value("#message-input") == VAULT_Q and "limit" in page.text_content(".msg.notice")
+         and page.is_enabled("#message-input") and n_sessions("e_dana") == before["e_dana"], page.text_content(".msg.notice"))
+    page.unroute("**/api/sessions")
+    errors[n_err:] = [e for e in errors[n_err:] if "status of 429" not in e]   # the simulated 429 above
+    page.locator(".msg.notice").evaluate("e => e.remove()")
+    page.fill("#message-input", "")
+
+    # chat: no toggles (first Send creates the chat), then playbooks (after distill)
     m = ask(page, VAULT_Q, set())
-    step("chat with all toggles off: answer, no citations", m.locator(".chip.cite").count() == 0)
+    step("first Send with no chat: creates exactly one session, answers, no citations",
+         n_sessions("e_dana") == before["e_dana"] + 1 and m.locator(".chip.cite").count() == 0
+         and page.locator("#session-list li.active").count() == 1 and len(m.text_content()) > 40)
+    shot(page, "d02c_after_first_send", full=False)
     t0 = time.time()
     rep = api("/api/distill", {})
     step("distill (via API) for the playbook toggle", rep["playbooks_created"] == 2, f"{time.time() - t0:.0f}s")
@@ -197,6 +250,29 @@ with sync_playwright() as p:
             break
         btns.first.click()
         page.wait_for_timeout(1000)
+
+    # closed chat selected: transcript read-only, Send starts (and selects) a new chat
+    closed = next(x for x in api("/api/sessions?employee_id=e_dana&agent_id=a_dev") if x["status"] == "closed")
+    closed_msgs = len(api(f"/api/sessions/{closed['id']}")["messages"])
+    n0 = n_sessions("e_dana")
+    page.click(f"#session-list li[data-session={closed['id']}]")
+    page.wait_for_selector(".msg.user")
+    ph = page.get_attribute("#message-input", "placeholder")
+    step("closed chat: transcript visible, input enabled with the 'closed' placeholder",
+         page.locator(".msg").count() == closed_msgs and page.is_enabled("#message-input")
+         and ph == "This chat is closed. Type here to start a new chat", ph)
+    shot(page, "d03b_closed_chat", full=False)
+    page.fill("#message-input", VAULT_Q)
+    page.click("#send-btn")   # the closed transcript is replaced by the new chat, so wait for its first answer
+    page.wait_for_function(f"document.querySelector('#messages').dataset.activeSession !== '{closed['id']}' && "
+                           "document.querySelectorAll('.msg.assistant .bubble:not(.typing)').length === 1", timeout=180000)
+    page.wait_for_function("!document.querySelector('#message-input').disabled", timeout=30000)
+    page.wait_for_timeout(800)
+    active = page.get_attribute("#messages", "data-active-session")
+    step("closed chat + Send: new session created and selected, closed one untouched",
+         n_sessions("e_dana") == n0 + 1 and active != closed["id"] and page.locator(".msg").count() == 2
+         and len(api(f"/api/sessions/{closed['id']}")["messages"]) == closed_msgs
+         and page.get_attribute("#session-list li.active", "data-session") == active, f"{closed['id']} -> {active}")
 
     # upload a test doc -> Indexing -> Ready
     path = os.path.join(tempfile.mkdtemp(), DOC_NAME)

@@ -34,6 +34,7 @@ const state = {
   showAllPlaybooks: false,
   loadToken: 0,        // bumps on employee switch so stale responses are dropped
   sessionMessages: 0,
+  sessionClosed: false,  // the selected chat is closed: transcript is read-only, Send starts a new chat
 };
 
 // ---------------- helpers ----------------
@@ -391,16 +392,33 @@ function renderMessage(m, cites) {
   return div;
 }
 
+// The composer works whenever an agent is selected; a chat is created lazily on the first Send.
 function enableComposer(on) {
-  $("#message-input").disabled = !on;
-  $("#send-btn").disabled = !on;
+  const ok = on && !!state.agentId;
+  $("#message-input").disabled = !ok;
+  $("#send-btn").disabled = !ok;
+  const agent = state.agents[state.agentId]?.name || "the agent";
+  $("#message-input").placeholder = state.sessionClosed ? "This chat is closed. Type here to start a new chat"
+    : `Message ${agent}…`;
+}
+
+// Shown in the message area when the chat has no messages: example questions fill the input, never auto-send.
+function renderChatEmpty() {
+  const agent = state.agents[state.agentId];
+  const examples = (PRESETS[agent?.kind] || []).slice(0, 3);
+  $("#messages").innerHTML = `<div class="chat-empty">
+    <p class="empty-title">Ask the ${escapeHtml(agent?.name || "agent")} anything</p>
+    <p class="muted small">Tip: use the toggles below to ground the answer in playbooks, skills and your documents.</p>
+    ${examples.length ? `<div class="chat-examples">${examples.map((q) =>
+      `<button type="button" class="chip prompt-card" data-example="${escapeHtml(q)}"><span>${md(q).replace(/^<p>|<\/p>$/g, "")}</span>${ARROW}</button>`).join("")}</div>` : ""}
+  </div>`;
 }
 
 function renderChatHeader(session) {
   const agent = state.agents[state.agentId];
   $("#chat-title").innerHTML = session
     ? `<b>${escapeHtml(agent?.name || "Agent")}</b> <span class="muted">· ${escapeHtml(session.title)}</span>`
-    : `<b>${escapeHtml(agent?.name || "Agent")}</b> <span class="muted">· select a chat or start a new one</span>`;
+    : `<b>${escapeHtml(agent?.name || "Agent")}</b> <span class="muted">· new chat</span>`;
   $("#learn-btn").hidden = !session;
 }
 
@@ -409,17 +427,21 @@ async function openSession(id) {
   $("#learn-result").hidden = true;
   const { session, messages } = await api(`/api/sessions/${encodeURIComponent(id)}`);
   state.sessionMessages = messages.length;
+  state.sessionClosed = session.status === "closed";
+  $("#messages").dataset.activeSession = id;
   renderChatHeader(session);
-  $("#messages").innerHTML = messages.length ? "" : `<p class="muted empty-chat">Ask ${escapeHtml(state.agents[state.agentId]?.name || "the agent")} anything.</p>`;
+  if (messages.length) $("#messages").innerHTML = ""; else renderChatEmpty();
   messages.forEach((m) => renderMessage(m));
   enableComposer(true);
   $("#message-input").focus();
   await loadSessions();
 }
 
+const createSession = () => api("/api/sessions", { method: "POST", body: { employee_id: empId(), agent_id: state.agentId } });
+
 async function newSession() {
   try {
-    const s = await api("/api/sessions", { method: "POST", body: { employee_id: empId(), agent_id: state.agentId } });
+    const s = await createSession();
     await openSession(s.id);
   } catch (e) {
     if (!isFriendly(e)) throw e;
@@ -440,11 +462,33 @@ async function sendMessage(e) {
   e.preventDefault();
   const input = $("#message-input");
   const content = input.value.trim();
-  if (!content || !state.sessionId || state.busy) return;
+  if (!content || !state.agentId || state.busy) return;
   state.busy = true;
   enableComposer(false);
+  if (!state.sessionId || state.sessionClosed) {
+    // No open chat selected: create one now (never on load or on a switch), then send into it.
+    $("#send-btn").textContent = "Starting…";
+    try {
+      const s = await createSession();
+      state.sessionId = s.id;
+      state.sessionClosed = false;
+      state.sessionMessages = 0;
+      $("#messages").dataset.activeSession = s.id;
+      $("#messages").innerHTML = "";
+      $("#learn-result").hidden = true;
+      renderChatHeader(s);
+    } catch (err) {
+      if (isFriendly(err)) showNotice(err.detail); else toast(err.message, true);
+      state.busy = false;
+      enableComposer(true);
+      input.focus();
+      return;   // the typed text stays in the input
+    } finally {
+      $("#send-btn").textContent = "Send";
+    }
+  }
   input.value = "";
-  $("#messages .empty-chat")?.remove();
+  $("#messages .chat-empty")?.remove();
   renderMessage({ role: "user", content });
   const typing = renderMessage({ role: "assistant", content: "_Thinking…_" });
   typing.querySelector(".bubble").classList.add("typing");
@@ -474,10 +518,12 @@ async function sendMessage(e) {
 
 function resetChat() {
   state.sessionId = null;
-  $("#messages").innerHTML = "";
+  state.sessionClosed = false;
+  $("#messages").dataset.activeSession = "";
+  renderChatEmpty();
   $("#learn-result").hidden = true;
   renderChatHeader(null);
-  enableComposer(false);
+  enableComposer(true);
 }
 
 async function learnSkills() {
@@ -1043,6 +1089,8 @@ document.addEventListener("click", (e) => {
   if (ag) return selectAgent(ag.dataset.agent).catch((err) => toast(err.message, true));
   const mode = e.target.closest("[data-docmode]");
   if (mode) return setDocMode(mode.dataset.docmode);
+  const ex = e.target.closest("[data-example]");
+  if (ex) { $("#message-input").value = ex.dataset.example; $("#message-input").focus(); return; }
   const preset = e.target.closest("[data-q]");
   if (preset) { $("#compare-question").value = preset.dataset.q; $("#compare-question").focus(); return runCompare(); }
   const ses = e.target.closest("[data-session]");

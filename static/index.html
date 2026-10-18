@@ -144,7 +144,7 @@
 
         <section class="panel chat" aria-label="Chat">
           <header class="chat-header">
-            <div class="chat-title" id="chat-title">Select a chat or start a new one</div>
+            <div class="chat-title" id="chat-title"></div>
             <button class="btn ghost-light small" id="learn-btn" hidden title="Extract reusable procedures from this conversation">✦ Learn skills from this chat</button>
           </header>
           <div class="learn-result" id="learn-result" hidden></div>
@@ -158,6 +158,7 @@
               <span><b>Documents</b><small id="rag-help">Answer only from documents you can see (yours and shared)</small></span></label>
           </div>
           <form class="composer" id="composer">
+            <label for="message-input" class="sr-only">Message</label>
             <input id="message-input" type="text" placeholder="Message the agent…" autocomplete="off" disabled>
             <button class="btn primary" id="send-btn" disabled>Send</button>
           </form>
@@ -220,7 +221,7 @@
             <h2>Guardrails</h2>
             <p class="muted">Before a document or skill is shared with the org it is scanned automatically for personal data and secrets:
               deterministic patterns, then a Gemini check that tells org-wide facts from personal values. If the Gemini check
-              fails, the share is blocked (fail closed). The scan is a safety net, not a guarantee. <b>Human review before publishing is planned (V3), not built.</b>
+              fails, the share is blocked (fail closed). The scan is a safety net, not a guarantee. <b>Human review before publishing is planned for the December round, not built.</b>
               Findings are stored as categories only, never values.</p>
           </div>
           <button class="btn primary small" id="guardrail-refresh">Refresh</button>

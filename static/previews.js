@@ -103,20 +103,20 @@
   }
 
   // ---------------- Admin › Roadmap (real, static) ----------------
-  const ST = { now: "Working now", v2: "Next version (V2)", v3: "V3", dec: "December round" };
+  const ST = { now: "Working now", dec: "December round" };
   const item = (st, text) => `<li class="st-${st}"><span class="st-dot"></span>${text}</li>`;
 
   function roadmap() {
     return `<div class="panel">
       <h2>Roadmap</h2>
-      <p class="muted">What runs today and what is planned. Colors show status.</p>
+      <p class="muted">What runs today and what is planned for the December round. Colors show status.</p>
       <div class="legend">${Object.entries(ST).map(([k, l]) => `<span class="st-${k}"><span class="st-dot"></span>${l}</span>`).join("")}</div>
       <div class="arch">
         <div class="arch-node">
           <h4>Users / Teams</h4>
           <ul>${item("now", "Synthetic Acme employees, each with siloed sessions")}
               ${item("now", "User workspace: view as any employee, chat, My knowledge")}
-              ${item("v2", "Users &amp; Teams admin, directory sync")}</ul>
+              ${item("dec", "Users &amp; Teams admin, directory sync")}</ul>
         </div>
         <div class="arch-arrow" aria-hidden="true">→</div>
         <div class="arch-node">
@@ -125,12 +125,13 @@
             <ul>${item("now", "Dev Agent, HR Agent (Gemini 2.5 Flash on Vertex AI)")}
                 ${item("now", "Playbook retrieval + citations")}
                 ${item("now", "Document upload + RAG on Vertex AI Search (private to the uploader)")}
-                ${item("v2", "Agent builder (create / edit agents)")}
+                ${item("now", "Daily cost caps (global + per IP) with today's usage vs limits in Admin › Traces")}
+                ${item("dec", "Agent builder (create / edit agents)")}
                 ${item("dec", "ADK on Vertex AI Agent Engine")}</ul></div>
           <div class="arch-sub"><h5>Sub-agents</h5>
             <ul>${item("dec", "Task sub-agents that load skills")}
                 ${item("dec", "MCP connections (Jenkins, GitHub, Drive, Slack)")}
-                ${item("v2", "MCP server registry")}</ul></div>
+                ${item("dec", "MCP server registry")}</ul></div>
         </div>
         <div class="arch-arrow" aria-hidden="true">←</div>
         <div class="arch-node">
@@ -138,8 +139,8 @@
           <ul>${item("now", "Summarize → cluster across employees → compile")}
               ${item("now", "Only resolved sessions give steps; per-person values dropped")}
               ${item("now", "Traces: Cloud Trace + in-app trace view")}
-              ${item("v3", "Upload local assistant sessions")}
-              ${item("v3", "PII redaction of sessions before distill")}</ul>
+              ${item("dec", "Upload local assistant sessions")}
+              ${item("dec", "PII redaction of sessions before distill")}</ul>
         </div>
         <div class="arch-arrow" aria-hidden="true">→</div>
         <div class="arch-node">
@@ -148,7 +149,8 @@
               ${item("now", "Compare: with vs without playbooks")}
               ${item("now", "Skills learned from one employee's chat: review, approve, apply (private)")}
               ${item("now", "Share docs and skills with the org, behind an automatic PII/secret guardrail (not a guarantee)")}
-              ${item("v3", "Human review of shared items and playbooks before publish")}
+              ${item("now", "Share audit log: every share attempt with its verdict and finding categories (Admin › Guardrails)")}
+              ${item("dec", "Human review of shared items and playbooks before publish")}
               ${item("dec", "Skill creation from playbooks")}</ul>
         </div>
       </div>

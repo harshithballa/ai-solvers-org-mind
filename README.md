@@ -39,25 +39,27 @@ control on them is disabled, and they make no network calls.
 |---|---|---|
 | Users / Teams | Synthetic Acme employees, each with siloed sessions | ✅ Working now |
 | Users / Teams | User workspace: view as any employee, chat, My knowledge | ✅ Working now |
-| Users / Teams | Users & Teams admin, directory sync (*Admin › Users & Teams*) | 🔵 Next version (V2) |
+| Users / Teams | Users & Teams admin, directory sync (*Admin › Users & Teams*) | 🟠 December round |
 | Agents | Dev Agent and HR Agent on Gemini 2.5 Flash (Vertex AI) | ✅ Working now |
 | Agents | Playbook retrieval + citations in answers | ✅ Working now |
 | Agents | Document upload + RAG on Vertex AI Search, private to the uploader (*User › My knowledge*) | ✅ Working now |
-| Agents | Agent builder: create / edit agents (*Admin › Agents*) | 🔵 Next version (V2) |
-| Agents | MCP server registry (*Admin › MCPs*) | 🔵 Next version (V2) |
+| Agents | Daily cost caps (global + per IP) with today's usage vs limits (*Admin › Traces*) | ✅ Working now |
+| Agents | Agent builder: create / edit agents (*Admin › Agents*) | 🟠 December round |
+| Agents | MCP server registry (*Admin › MCPs*) | 🟠 December round |
 | Agents | ADK on Vertex AI Agent Engine | 🟠 December round |
 | Agents | Task sub-agents that load skills (*Admin › Skills & Sub-agents*) | 🟠 December round |
 | Agents | MCP connections: Jenkins, GitHub, Drive, Slack | 🟠 December round |
 | Distillation | Summarize → cluster across employees → compile playbooks | ✅ Working now |
 | Distillation | Only resolved sessions give steps; per-person values dropped | ✅ Working now |
 | Distillation | Traces: Cloud Trace + in-app trace view (*Admin › Traces*) | ✅ Working now |
-| Distillation | Upload local assistant sessions | 🟣 V3 |
-| Distillation | PII redaction of sessions before distill | 🟣 V3 |
+| Distillation | Upload local assistant sessions | 🟠 December round |
+| Distillation | PII redaction of sessions before distill | 🟠 December round |
 | Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
 | Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
 | Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private) | ✅ Working now |
 | Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (patterns + Gemini, fail closed; not a guarantee) (*Admin › Guardrails*) | ✅ Working now |
-| Playbooks / Skills | Human review of shared items and playbooks before publish | 🟣 V3 |
+| Playbooks / Skills | Share audit log: every share attempt with its verdict and finding categories (*Admin › Guardrails*) | ✅ Working now |
+| Playbooks / Skills | Human review of shared items and playbooks before publish | 🟠 December round |
 | Playbooks / Skills | Skill creation from playbooks | 🟠 December round |
 
 ## Architecture
@@ -218,7 +220,7 @@ under *Shared by colleagues*, read-only, and their agents can retrieve and cite 
   Publishing needs both layers clean, in the same request. **Fail closed:** if the Gemini check errors, nothing is
   shared ("couldn't verify, try again"). Findings carry a category and a masked preview (e.g. `d***@g***.com`)
   everywhere: API, UI, logs, spans and `share_events`. The scan is automatic and can miss things, so it is a
-  safety net, not a guarantee. **There is no human review yet** (planned for V3).
+  safety net, not a guarantee. **There is no human review yet** (planned for the December round).
 - `POST /api/skills/{id}/share|unshare`, `POST /api/rag/docs/{id}/share|unshare` (owner only). PDFs can't be scanned
   yet, so they can't be shared; text over 200 KB is too large to scan. Editing a shared skill makes it private again
   until it is re-scanned. Sharing a document flips our own scope field, so it is instant (no re-import).
@@ -289,7 +291,7 @@ Before each take: open **Admin** (header link), click **Reset demo** (top right,
    employee's cost center.
 8. **Under the hood (Trace button / Admin › Traces).** Each request shows its Gemini calls with model, latency,
    tokens and the playbooks used; *Cloud Trace ↗* opens the full span tree.
-9. **What's next (Admin › Roadmap).** Working now vs V2, V3 and the December round.
+9. **What's next (Admin › Roadmap).** Working now vs the December round.
 
 ## Observability
 
@@ -318,7 +320,7 @@ Before each take: open **Admin** (header link), click **Reset demo** (top right,
   cost centers, amounts) from playbooks, enforced in code.
 - **Sharing is guarded automatically** (patterns + Gemini, fail closed; see *Sharing with the org*). It is not a
   guarantee.
-- **Planned for V3:** human review before a shared item or playbook publishes, and PII redaction of sessions
+- **Planned for the December round:** human review before a shared item or playbook publishes, and PII redaction of sessions
   before they reach the distiller.
 - Public demo: chat, compare and distill are unauthenticated and call Gemini; `--max-instances 1` caps spend.
 
@@ -348,11 +350,10 @@ The public deployment bounds worst-case spend (budget: INR 1,000 for the judging
 
 ## Roadmap
 
-- **Next version (V2):** Users & Teams admin with directory sync, an agent builder, and an MCP server registry.
-- **V3:** human review before publish (shared items and playbooks), PII redaction of sessions before distill, and
-  upload of local assistant sessions. (The automatic share guardrail is already working.)
 - **December (final) round:** move agents to **ADK on Vertex AI Agent Engine** with sub-agents, **MCP connections**
-  (Jenkins, GitHub, Google Drive, Slack), **upload** of external sessions (pulled forward from V3), and
-  **skill creation** from playbooks.
+  (Jenkins, GitHub, Google Drive, Slack), **upload** of local and external assistant sessions, **skill creation**
+  from playbooks, Users & Teams admin with directory sync, an agent builder, an MCP server registry, human review
+  before publish (shared items and playbooks), and PII redaction of sessions before distill. (The automatic share
+  guardrail is already working.)
 - Also planned: tuning summarize concurrency and retry/backoff for faster Distill, per-team access control on
   playbooks, and feedback signals (did the playbook help?) to rank and retire playbooks.

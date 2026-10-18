@@ -97,9 +97,13 @@ with sync_playwright() as p:
             step("[desktop] old #/user/chat link lands on the workspace", page.url.endswith("#/user"))
             # deep link straight into a tab
             page.goto(BASE + "/#/admin/roadmap"); page.wait_for_selector("#page-admin-roadmap:not([hidden]) .legend")
-            legend = page.text_content("#page-admin-roadmap .legend")
-            step("[desktop] deep link #/admin/roadmap + legend", all(x in legend for x in
-                 ("Working now", "Next version", "V3", "December round")), legend)
+            legend = page.locator("#page-admin-roadmap .legend > span").all_text_contents()
+            step("[desktop] deep link #/admin/roadmap + legend has exactly Working now / December round",
+                 legend == ["Working now", "December round"], str(legend))
+            kinds = page.eval_on_selector_all("#page-admin-roadmap .arch li", "els => els.map(e => e.className)")
+            step("[desktop] roadmap: every item is green (now) or amber (December), no V2/V3 left",
+                 kinds and set(kinds) <= {"st-now", "st-dec"} and "V2" not in page.text_content("#page-admin-roadmap")
+                 and "V3" not in page.text_content("#page-admin-roadmap"), f"{len(kinds)} items: {sorted(set(kinds))}")
             road = page.text_content("#page-admin-roadmap")
             step("[desktop] roadmap: docs + skills real, sharing planned", all(x in road for x in
                  ("Document upload + RAG", "Skills learned from one employee", "Share docs and skills with the org")))

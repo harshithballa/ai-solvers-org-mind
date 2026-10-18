@@ -28,6 +28,14 @@ CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser")
 os.makedirs(SHOTS, exist_ok=True)
 results, errors = [], []
 
+
+def new_chat(page):
+    """+ New chat; the input is always enabled now, so wait for the new session to be the active one."""
+    before = page.get_attribute("#messages", "data-active-session") or ""
+    page.click("#new-session-btn")
+    page.wait_for_function("b => { const s = document.querySelector('#messages').dataset.activeSession; "
+                           "return s && s !== b; }", arg=before)
+
 def step(name, ok, detail=""):
     results.append((name, ok, detail)); print(f"{'PASS' if ok else 'FAIL'} {name} {detail}", flush=True)
 
@@ -97,7 +105,7 @@ with sync_playwright() as p:
     page.click("#admin-link"); page.wait_for_selector("#page-user-home:not([hidden])")
     step("workspace defaults to Dana", page.input_value("#employee-select") == "e_dana")
     page.check("#use-playbooks")  # toggles default off
-    page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
+    new_chat(page)
     page.fill("#message-input", "Hi, I'm new. acme deploy staging fails with ACME_VAULT_TOKEN expired, what do I do?")
     page.click("#send-btn")
     page.wait_for_selector(".msg.assistant .bubble:not(.typing)", timeout=120000)
@@ -114,7 +122,7 @@ with sync_playwright() as p:
     # 7. HR chat as Noah
     page.select_option("#employee-select", "e_noah"); page.click("[data-agent=a_hr]")
     page.wait_for_selector("[data-agent=a_hr].selected"); page.wait_for_timeout(500)
-    page.click("#new-session-btn"); page.wait_for_function("!document.querySelector('#message-input').disabled")
+    new_chat(page)
     page.fill("#message-input", "My home-office stipend claim got rejected with Missing cost center. Help?")
     page.click("#send-btn")
     page.wait_for_selector(".msg.assistant .bubble:not(.typing)", timeout=120000)
