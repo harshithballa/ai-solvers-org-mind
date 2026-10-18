@@ -3,6 +3,15 @@
 **Your company's agents learn from each other's conversations.**
 Google Cloud AI Builder Cup prototype. Theme: Future of Work & Enterprise Productivity.
 
+**Live:** https://orgmind-207900876373.us-central1.run.app (synthetic data, daily cost caps on)
+
+| | |
+|---|---|
+| Google services | Gemini on **Vertex AI** (`google-genai` SDK), **Vertex AI Search** (document RAG), **Cloud Storage** (uploaded documents), **Firestore** (all app data), **Cloud Run** (one service: API + static UI), **Secret Manager** (admin token), **Cloud Trace** + **Cloud Logging** (OpenTelemetry spans, correlated JSON logs) |
+| Models | `gemini-2.5-flash` (chat, summarize, compile, skill extraction, share guardrail), `gemini-embedding-001` (768-dim embeddings for clustering and retrieval) |
+| Tests | 134 pytest tests (fake LLM + in-memory store, no GCP credentials needed), plus real-Gemini evals and headless-browser flows (see *Run locally*) |
+| Cost caps | Per-UTC-day global caps (600 Gemini calls, 250 chat messages, 15 distills, 80 new chats, ...) and per-IP hourly caps; see *Cost caps* |
+
 ## The problem
 
 Enterprises roll out AI agents per team (a Dev agent, an HR agent), but every employee's chat session is a silo.
@@ -148,7 +157,7 @@ Open http://localhost:8080.
 Tests and evals:
 
 ```bash
-.venv/bin/pytest                                                 # unit + API tests (fake LLM)
+.venv/bin/pytest -q                                              # 134 unit + API tests (fake LLM, no GCP needed)
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions        # 12 fixed questions, real Gemini
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions --url https://<service-url>
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.skills_eval           # skill extraction + use, real Gemini
@@ -156,7 +165,11 @@ GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.skills_eval          
 GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.firestore_persistence_check --database orgmind-test
 ORGMIND_ADMIN_TOKEN=<token> .venv/bin/python scripts/demo_flow.py --url <url>     # headless browser demo flow
 .venv/bin/python scripts/ui_tabs_check.py --url <url>    # every tab at desktop + phone width, preview rules
+.venv/bin/python scripts/user_flow.py --url <url>        # User workspace with real Gemini + Vertex AI Search (fresh memory-store server)
+GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.guardrail_eval          # share guardrail, real Gemini
 ```
+
+The browser scripts need Chromium: `.venv/bin/playwright install chromium` (or a system `chromium` on `PATH`).
 
 ## Document RAG (Phase 1, `rag-skills` branch)
 
