@@ -148,3 +148,10 @@ def test_usage_endpoint_requires_admin(limited):
     assert res.status_code == 200
     rows = {r["bucket"]: r for r in res.json()["buckets"]}
     assert rows["sessions_created"]["count"] == 1 and rows["gemini_calls"]["limit"] == 600
+
+
+def test_clear_traces_only_selects_todays_counters():
+    from scripts.clear_traces import todays_counter_ids
+
+    ids = ["2026-10-18-chat_messages", "2026-10-18-gemini_calls", "2026-10-17-gemini_calls", "2026-10-180-x"]
+    assert todays_counter_ids(ids, "2026-10-18") == ["2026-10-18-chat_messages", "2026-10-18-gemini_calls"]
