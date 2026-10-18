@@ -263,6 +263,11 @@ All requests carry the admin token, so they don't count against the cost caps.
 The shared `acme-bq-onboarding` document is prepared in every mode. For a live recording:
 `python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events --reset-usage`.
 
+`python -m scripts.record_prep` does the whole recording setup on the main URL: purges `test-` docs, runs that
+demo_prep command, uploads `~/test-contact.txt` (synthetic email + phone) as Dana and waits for Ready, clears traces
+and checks the state. After recording, `python -m scripts.record_prep --finish` restores the judge-ready default state
+(2 playbooks, Dana's shared skill and doc) and asserts it. `--dry-run` prints the actions only.
+
 ## Seed and reset
 
 - On startup the app seeds Acme Corp **only if the store is empty**: 8 employees, Dev + HR agents and
