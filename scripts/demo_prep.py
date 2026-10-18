@@ -6,6 +6,12 @@ With --yes, idempotently: reset demo, distill, upload "acme-bq-onboarding.txt" a
 exists and isn't failed), wait for Ready, learn skills from Dana's BigQuery chat (ses_seed_14), approve the skill,
 then share the doc and the skill with the org (both go through the guardrail). Prints the final state.
 All requests carry the admin token, so they are not counted against the demo cost caps.
+
+For a live recording, skip the parts you want to show live (the reset already removes skills and playbooks):
+    --no-skill      no skill is extracted/approved/shared; checks that no employee has a skill. Dana's closed
+                    BigQuery chat (ses_seed_14) stays, so "Learn skills from this chat" can be run live.
+    --no-distill    no distill; checks that there are no playbooks (Admin > Knowledge shows its empty state).
+The shared document acme-bq-onboarding is prepared either way.
 """
 import argparse
 import json
@@ -26,14 +32,19 @@ DOC_TEXT = """Acme analytics onboarding: querying BigQuery from your laptop (syn
 4. Questions go to #data-platform.
 """
 OWNER, SESSION = "e_dana", "ses_seed_14"
-STEPS = [
-    "reset the demo (POST /api/demo/reset)",
-    "distill sessions into playbooks (POST /api/distill)",
-    f"as Dana, upload {DOC_TITLE}.txt unless a non-failed copy exists, and wait until it is Ready",
-    f"as Dana, learn skills from {SESSION} and approve the BigQuery skill (reuses an active one if present)",
-    "share the document and the skill with the org (guardrail scan; stops if blocked)",
-    "print the final state",
-]
+
+
+def steps(no_skill=False, no_distill=False):
+    return [
+        "reset the demo (POST /api/demo/reset)",
+        "skip distill; check there are no playbooks" if no_distill else "distill sessions into playbooks (POST /api/distill)",
+        f"as Dana, upload {DOC_TITLE}.txt unless a non-failed copy exists, and wait until it is Ready",
+        f"skip the skill; check no employee has a skill ({SESSION} stays for a live 'Learn skills')" if no_skill
+        else f"as Dana, learn skills from {SESSION} and approve the BigQuery skill (reuses an active one if present)",
+        "share the document with the org (guardrail scan; stops if blocked)" if no_skill
+        else "share the document and the skill with the org (guardrail scan; stops if blocked)",
+        "print the final state",
+    ]
 
 
 def main():
@@ -42,10 +53,12 @@ def main():
     ap.add_argument("--admin-token-file", required=True)
     ap.add_argument("--yes", action="store_true", help="actually run (default: dry run)")
     ap.add_argument("--index-timeout", type=int, default=900)
+    ap.add_argument("--no-skill", action="store_true", help="leave no skills (learn the BigQuery skill live)")
+    ap.add_argument("--no-distill", action="store_true", help="leave no playbooks (run Distill live)")
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
     print(f"target: {base}")
-    for i, s in enumerate(STEPS, 1):
+    for i, s in enumerate(steps(args.no_skill, args.no_distill), 1):
         print(f"  {i}. {s}")
     if not args.yes:
         print("dry run: pass --yes to execute")
@@ -65,8 +78,14 @@ def main():
 
     t0 = time.time()
     print("\n1. reset"); call("POST", "/api/demo/reset")
-    print("2. distill"); rep = call("POST", "/api/distill", {})
-    print(f"   playbooks created={rep['playbooks_created']} updated={rep['playbooks_updated']}")
+    if args.no_distill:
+        pbs = call("GET", "/api/playbooks")
+        print(f"2. distill skipped: {len(pbs)} playbooks")
+        if pbs:
+            sys.exit("   expected no playbooks after the reset")
+    else:
+        print("2. distill"); rep = call("POST", "/api/distill", {})
+        print(f"   playbooks created={rep['playbooks_created']} updated={rep['playbooks_updated']}")
 
     print("3. document")
     docs = [d for d in call("GET", f"/api/rag/docs?employee_id={OWNER}")
@@ -83,21 +102,32 @@ def main():
     if doc["status"] != "ready":
         sys.exit(f"   document failed: {doc.get('error')}")
 
-    print("4. skill")
-    mine = [s for s in call("GET", f"/api/skills?employee_id={OWNER}")
-            if s["owner_employee_id"] == OWNER and s["source_session_id"] == SESSION and s["status"] == "active"]
-    if mine:
-        skill = mine[0]
-        print(f"   reusing active skill {skill['id']} {skill['name']!r}")
+    employees = [e["id"] for e in call("GET", "/api/org")["employees"]]
+    skill = None
+    if args.no_skill:
+        left = {e: len(call("GET", f"/api/skills?employee_id={e}")) for e in employees}
+        print(f"4. skill skipped: skills per employee {left}")
+        if any(left.values()):
+            sys.exit("   expected no skills after the reset")
+        session = call("GET", f"/api/sessions/{SESSION}")
+        print(f"   {SESSION} kept ({session['session']['status']}, {len(session['messages'])} messages)")
     else:
-        found = call("POST", "/api/skills/extract", {"session_id": SESSION, "employee_id": OWNER})["skills"]
-        if not found:
-            sys.exit("   no skill extracted from the BigQuery chat")
-        skill = call("POST", f"/api/skills/{found[0]['id']}/approve", {"employee_id": OWNER})
-        print(f"   extracted and approved {skill['id']} {skill['name']!r}")
+        print("4. skill")
+        mine = [s for s in call("GET", f"/api/skills?employee_id={OWNER}")
+                if s["owner_employee_id"] == OWNER and s["source_session_id"] == SESSION and s["status"] == "active"]
+        if mine:
+            skill = mine[0]
+            print(f"   reusing active skill {skill['id']} {skill['name']!r}")
+        else:
+            found = call("POST", "/api/skills/extract", {"session_id": SESSION, "employee_id": OWNER})["skills"]
+            if not found:
+                sys.exit("   no skill extracted from the BigQuery chat")
+            skill = call("POST", f"/api/skills/{found[0]['id']}/approve", {"employee_id": OWNER})
+            print(f"   extracted and approved {skill['id']} {skill['name']!r}")
 
     print("5. share")
-    for kind, item, path in (("doc", doc, f"/api/rag/docs/{doc['id']}"), ("skill", skill, f"/api/skills/{skill['id']}")):
+    items = [("doc", doc, f"/api/rag/docs/{doc['id']}")] + ([("skill", skill, f"/api/skills/{skill['id']}")] if skill else [])
+    for kind, item, path in items:
         if item.get("scope") == "org":
             print(f"   {kind} already shared")
             continue
@@ -113,6 +143,8 @@ def main():
         print(f"   doc   {d['title']!r} {d['status']} scope={d['scope']} shared_by={d.get('shared_by_name')}")
     for s in call("GET", f"/api/skills?employee_id={OWNER}"):
         print(f"   skill {s['name']!r} {s['status']} scope={s['scope']} shared_by={s.get('shared_by_name')}")
+    print(f"   skills (all employees): {sum(len(call('GET', f'/api/skills?employee_id={e}')) for e in employees)}")
+    print(f"   chats: {sum(len(call('GET', f'/api/sessions?employee_id={e}')) for e in employees)}")
     print(f"done in {time.time() - t0:.0f}s")
     return 0
 
