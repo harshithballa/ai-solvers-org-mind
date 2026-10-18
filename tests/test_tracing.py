@@ -103,3 +103,32 @@ def test_json_log_lines_carry_trace_correlation(monkeypatch):
     assert line["logging.googleapis.com/trace"] == "projects/demo-project/traces/" + "a" * 32
     assert line["logging.googleapis.com/spanId"] == "b" * 16
     assert line["operation"] == "answer"
+
+
+def test_flush_never_holds_a_response_longer_than_its_timeout(monkeypatch):
+    """A slow span export (the SDK's force_flush ignores its timeout) must not delay the response."""
+    import threading
+    import time as _time
+
+    from app import tracing
+
+    release = threading.Event()
+
+    class SlowProvider:
+        calls = 0
+
+        def force_flush(self, timeout_millis=None):
+            SlowProvider.calls += 1
+            release.wait(5)
+
+    monkeypatch.setattr(tracing, "_provider", SlowProvider())
+    monkeypatch.setattr(tracing, "_flush_thread", None)
+    try:
+        t0 = _time.monotonic()
+        tracing.flush(timeout_ms=200)
+        tracing.flush(timeout_ms=200)   # export still running: waits again, but starts no second export
+        assert _time.monotonic() - t0 < 1.5
+        assert SlowProvider.calls == 1
+    finally:
+        release.set()
+        tracing._flush_thread.join(2)

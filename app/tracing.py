@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -83,13 +84,31 @@ def _otlp_exporter():
     return OTLPSpanExporter(endpoint="telemetry.googleapis.com:443", credentials=channel_creds, timeout=5)
 
 
-def flush(timeout_ms: int = 2000) -> None:
-    if _provider is None:
-        return
+_flush_thread: threading.Thread | None = None
+
+
+def _force_flush() -> None:
     try:
-        _provider.force_flush(timeout_millis=timeout_ms)
+        _provider.force_flush()
     except Exception as e:
         log.warning("trace flush failed: %s", e)
+
+
+def flush(timeout_ms: int = 2000) -> None:
+    """Export queued spans, holding the response for at most timeout_ms.
+
+    The SDK's BatchSpanProcessor.force_flush ignores its timeout and exports synchronously (the OTLP exporter
+    retries a slow Telemetry API for ~10s), so it runs on a worker thread here. If an earlier flush is still
+    running, no second one is started: queued spans go out with that export or the next one."""
+    global _flush_thread
+    if _provider is None:
+        return
+    if _flush_thread is None or not _flush_thread.is_alive():
+        _flush_thread = threading.Thread(target=_force_flush, name="trace-flush", daemon=True)
+        _flush_thread.start()
+    _flush_thread.join(timeout_ms / 1000)
+    if _flush_thread.is_alive():
+        log.warning("trace export still running after %dms; not holding the response", timeout_ms)
 
 
 # ---------------- request scope ----------------

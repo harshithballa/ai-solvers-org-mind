@@ -534,9 +534,12 @@ async function learnSkills() {
   try {
     const r = await api("/api/skills/extract", { method: "POST", body: { session_id: state.sessionId, employee_id: empId() } });
     const n = r.skills.length;
+    const known = r.already_learned || [];
+    // Skills this chat already produced are not learned twice; link to the existing one instead.
+    const knownHtml = known.map((k) => `You already learned <button type="button" class="btn link inline" data-skill-view="${escapeHtml(k.id)}">${escapeHtml(k.name)}</button> from this chat.`).join(" ");
     box.className = `learn-result ${n ? "ok" : ""}`;
-    box.textContent = n ? `Learned ${n} skill${n > 1 ? "s" : ""} as draft: review ${n > 1 ? "them" : "it"} under My knowledge › Skills, then approve.`
-                        : "No reusable skill found in this chat.";
+    box.innerHTML = n ? escapeHtml(`Learned ${n} skill${n > 1 ? "s" : ""} as draft: review ${n > 1 ? "them" : "it"} under My knowledge › Skills, then approve.`) + (knownHtml ? ` ${knownHtml}` : "")
+                      : knownHtml || "No reusable skill found in this chat.";
     await loadSkills();
     if (n) openKnowledge();
   } catch (e) {

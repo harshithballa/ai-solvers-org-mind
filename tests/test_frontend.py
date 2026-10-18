@@ -37,3 +37,16 @@ def test_roadmap_has_exactly_two_statuses():
     assert "V2" not in roadmap and "V3" not in roadmap
     css = (STATIC / "styles.css").read_text()
     assert ".st-v2" not in css and ".st-v3" not in css
+
+
+def test_learn_skills_shows_already_learned_with_a_drawer_link():
+    js = (STATIC / "app.js").read_text()
+    learn = js[js.index("async function learnSkills()"):js.index("// ---------- My knowledge: documents")]
+    assert "r.already_learned" in learn and "You already learned" in learn and "from this chat." in learn
+    assert 'data-skill-view="${escapeHtml(k.id)}"' in learn   # the existing click handler opens the skill drawer
+    assert 'setBusy(btn, true, "✦ Learning…")' in learn        # loading state unchanged
+    # the API the message reads: a second extraction of the seeded BigQuery chat repeats the first skill
+    first = client.post("/api/skills/extract", json={"session_id": "ses_seed_14", "employee_id": "e_dana"}).json()
+    second = client.post("/api/skills/extract", json={"session_id": "ses_seed_14", "employee_id": "e_dana"}).json()
+    assert second["skills"] == [] and second["already_learned"] == [{"id": first["skills"][0]["id"],
+                                                                     "name": first["skills"][0]["name"]}]

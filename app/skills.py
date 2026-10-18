@@ -4,7 +4,9 @@ Not to be confused with playbooks (org-wide fixes distilled from the same proble
 app/distiller.py) or RAG docs (uploaded source material, app/rag_docs.py).
 
 extract: one Gemini call per session -> 0..2 drafts, post-checked (evidence, leaks, secret patterns), replacing the
-session's previous drafts. retrieve: active skills visible to the employee, cosine on embeddings (as playbooks).
+session's previous drafts. A candidate that repeats a skill the owner already has from the same session (not
+archived) is skipped and reported as already learned. retrieve: active skills visible to the employee, cosine on
+embeddings (as playbooks), at most one per owner and skill name.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ log = logging.getLogger("orgmind")
 
 MIN_MESSAGES = 4
 MAX_SKILLS = 2
+DEDUP_SIMILARITY = 0.88   # cosine of name + trigger embeddings at or above this = the same skill
 
 SECRET_PATTERNS = {
     "aws_access_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -49,6 +52,8 @@ class ExtractStats:
     rejected: int = 0
     redacted: int = 0
     replaced_drafts: int = 0
+    skipped: int = 0
+    already_learned: list[Skill] = field(default_factory=list)   # existing skills that candidates repeated
     latency_ms: float = 0.0
     rejections: list[str] = field(default_factory=list)
 
@@ -61,6 +66,33 @@ def skill_text(sk) -> str:
 def skill_doc_text(sk: Skill) -> str:
     """What gets embedded for retrieval (mirrors playbook_doc_text)."""
     return f"{sk.name}\n{sk.description}\n{sk.trigger}\n" + "\n".join(sk.steps)
+
+
+def norm_name(name: str) -> str:
+    return " ".join(name.lower().split())
+
+
+def _dedup_text(sk) -> str:
+    return f"{sk.name}\n{sk.trigger}"
+
+
+def dedup(candidates: list[Skill], existing: list[Skill]) -> tuple[list[Skill], list[Skill]]:
+    """Drop candidates that repeat an existing skill or an earlier candidate: same normalized name, or name+trigger
+    embeddings with cosine >= DEDUP_SIMILARITY. Returns (kept candidates, existing skills that were repeated)."""
+    if not candidates:
+        return [], []
+    vecs = get_llm().embed([_dedup_text(x) for x in [*existing, *candidates]], "SEMANTIC_SIMILARITY")
+    seen = list(zip(existing, vecs[:len(existing)]))
+    kept, repeated = [], []
+    for c, v in zip(candidates, vecs[len(existing):]):
+        match = next((e for e, ev in seen if norm_name(e.name) == norm_name(c.name)
+                      or cosine(v, ev) >= DEDUP_SIMILARITY), None)
+        if match is None:
+            kept.append(c)
+            seen.append((c, v))
+        elif match in existing and match not in repeated:
+            repeated.append(match)
+    return kept, repeated
 
 
 def secret_hits(text: str) -> list[str]:
@@ -162,14 +194,22 @@ def extract(session: Session, employee_id: str) -> tuple[list[Skill], ExtractSta
             skills.append(Skill(org_id=session.org_id, owner_employee_id=employee_id, agent_kind=session.agent_kind,
                                 name=d.name, description=d.description, trigger=d.trigger, steps=d.steps,
                                 parameters=d.parameters, evidence=d.evidence, source_session_id=session.id))
+        # Don't learn the same skill twice: compare with the owner's non-archived skills from this session.
+        existing = [x for x in store.list(Skill, source_session_id=session.id)
+                    if x.owner_employee_id == employee_id and x.status != "archived"]
+        proposed = len(skills)
+        skills, stats.already_learned = dedup(skills, existing)
+        stats.skipped = proposed - len(skills)
         if skills:
             vecs = get_llm().embed([skill_doc_text(s) for s in skills], "RETRIEVAL_DOCUMENT")
             for s, v in zip(skills, vecs):
                 s.embedding = v
 
-        # Idempotent per session: replace previous drafts, never touch active/archived skills.
-        for old in store.list(Skill, source_session_id=session.id):
-            if old.status == "draft":
+        # Idempotent per session: replace previous drafts (except ones a candidate just repeated, which are kept
+        # as they are), never touch active/archived skills.
+        kept_ids = {x.id for x in stats.already_learned}
+        for old in existing:
+            if old.status == "draft" and old.id not in kept_ids:
                 store.delete(Skill, old.id)
                 stats.replaced_drafts += 1
         for s in skills:
@@ -179,9 +219,10 @@ def extract(session: Session, employee_id: str) -> tuple[list[Skill], ExtractSta
         set_attrs(sp, **{"orgmind.skills.proposed": stats.proposed, "orgmind.skills.saved": stats.saved,
                          "orgmind.skills.rejected": stats.rejected, "orgmind.skills.redacted": stats.redacted,
                          "orgmind.skills.replaced_drafts": stats.replaced_drafts,
+                         "orgmind.skills.skipped_duplicates": stats.skipped,
                          "orgmind.latency_ms": stats.latency_ms})
-    log.info("skills extract %s: %d proposed, %d saved, %d rejected, %d redacted, %.0fms", session.id,
-             stats.proposed, stats.saved, stats.rejected, stats.redacted, stats.latency_ms)
+    log.info("skills extract %s: %d proposed, %d saved, %d rejected, %d redacted, %d already learned, %.0fms",
+             session.id, stats.proposed, stats.saved, stats.rejected, stats.redacted, stats.skipped, stats.latency_ms)
     return skills, stats
 
 
@@ -268,7 +309,14 @@ def score_skills(org_id: str, agent_kind: str, employee_id: str, query: str) -> 
     if not candidates:
         return []
     [q] = get_llm().embed([query], "RETRIEVAL_QUERY")
-    return sorted(((s, cosine(q, s.embedding)) for s in candidates), key=lambda x: x[1], reverse=True)
+    scored = sorted(((s, cosine(q, s.embedding)) for s in candidates), key=lambda x: x[1], reverse=True)
+    out, seen = [], set()
+    for sk, sc in scored:   # one skill per owner and name, even if older data holds duplicates
+        key = (sk.owner_employee_id, norm_name(sk.name))
+        if key not in seen:
+            seen.add(key)
+            out.append((sk, sc))
+    return out
 
 
 def retrieve(org_id: str, agent_kind: str, employee_id: str, query: str) -> list[tuple[Skill, float]]:

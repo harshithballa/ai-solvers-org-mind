@@ -258,9 +258,10 @@ All requests carry the admin token, so they don't count against the cost caps.
 | `--no-skill` | No skill is extracted/approved/shared; checks no employee has a skill. `ses_seed_14` stays, so *Learn skills from this chat* can run live |
 | `--no-distill` | No distill; checks there are no playbooks, so *Admin › Knowledge* shows its empty state and *Distill sessions* can run live |
 | `--clear-share-events` | Deletes every `share_events` document (a reset keeps this audit log), so *Admin › Guardrails* starts empty; prints the count. Talks to Firestore directly (`--database`, default `(default)`) |
+| `--reset-usage` | Deletes only today's (UTC) `usage_counters` documents, so every daily cap starts fresh; prints the deleted ids. Earlier days are kept. Same Firestore access and database check as `--clear-share-events` |
 
 The shared `acme-bq-onboarding` document is prepared in every mode. For a live recording:
-`python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events`.
+`python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events --reset-usage`.
 
 ## Seed and reset
 

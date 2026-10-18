@@ -3,7 +3,8 @@
     GOOGLE_CLOUD_PROJECT=<project> python -m scripts.skills_eval [--runs 3]
 
 1. BigQuery session -> exactly 1 skill, code in steps traceable to the transcript, parameters are names only,
-   the personal value appears nowhere in the skill (repeated --runs times, variance reported).
+   the personal value appears nowhere in the skill (repeated --runs times, archiving the previous run's skill so
+   it may be learned again; variance reported). Learning it again while it exists -> 0 new, 1 already learned.
 2. Plain factual Q&A (resolved) -> 0 skills.     3. Unresolved / abandoned sessions -> 0 skills.
 4. Approved skill + related questions with use_skills -> applies steps, asks for the parameter, cites the skill.
 5. Unrelated questions -> no skill cited.        6. Another employee asking -> never sees A's private skill.
@@ -84,6 +85,8 @@ def main():
         transcript = "\n".join(m.content for m in store.list_messages(BQ))
         runs = []
         for n in range(1, args.runs + 1):
+            if runs and runs[-1]:   # re-learning is only allowed once the earlier skill is archived (de-dup)
+                client.post(f"/api/skills/{runs[-1][0]['id']}/archive", json={"employee_id": owner[BQ]})
             res, secs = extract(BQ)
             found = res["skills"]
             print(f"\n[1] BigQuery run {n}: {len(found)} skill(s), proposed={res['proposed']} rejected={res['rejected']} "
@@ -113,6 +116,15 @@ def main():
         print(f"\n[1] variance: {len(names)} distinct names {sorted(names)}; step counts "
               f"{[len(f[0]['steps']) if f else 0 for f in runs]}; parameters "
               f"{[[p['name'] for p in f[0]['parameters']] if f else [] for f in runs]}")
+
+        # Learning the same chat again while its skill is still there: nothing new, reported as already learned.
+        res, _ = extract(BQ)
+        ok = res["skills"] == [] and len(res["already_learned"]) == 1
+        print(f"[1] learn again (de-dup): {len(res['skills'])} new, already learned "
+              f"{[k['name'] for k in res['already_learned']]} -> {'PASS' if ok else 'FAIL'}")
+        if not ok:
+            failures.append(f"[1] learn again: expected 0 new + 1 already learned, got {len(res['skills'])} new, "
+                            f"{res['already_learned']}")
 
         # A chat where the agent only repeated playbook answers and the employee never confirmed anything
         # (the Phase 3 over-trigger): must yield no skill.

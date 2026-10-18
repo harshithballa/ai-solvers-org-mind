@@ -16,6 +16,8 @@ For a live recording, skip the parts you want to show live (the reset already re
     --clear-share-events  delete every share_events document (the audit log a reset keeps), so Admin > Guardrails
                     starts empty. share_events has no API, so this talks to Firestore directly (database
                     --database, default "(default)"; the id is re-checked before every delete, as in clear_traces).
+    --reset-usage   delete only today's (UTC) usage_counters documents, so every daily cap starts fresh (same
+                    Firestore access and database check as --clear-share-events; earlier days are kept).
 The shared document acme-bq-onboarding is prepared either way.
 """
 import argparse
@@ -25,6 +27,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from scripts.clear_traces import guard, todays_counter_ids
 
 DOC_TITLE = "acme-bq-onboarding"   # uploaded as acme-bq-onboarding.txt
 DOC_TEXT = """Acme analytics onboarding: querying BigQuery from your laptop (synthetic).
@@ -42,10 +46,11 @@ DEFAULT_TOKEN_FILE = "~/.config/orgmind/admin_token"
 BATCH = 400
 
 
-def steps(no_skill=False, no_distill=False, clear_share_events=False):
+def steps(no_skill=False, no_distill=False, clear_share_events=False, reset_usage=False):
     return [
         "reset the demo (POST /api/demo/reset)",
         *(["delete every share_events document (Firestore; Guardrails starts empty)"] if clear_share_events else []),
+        *(["delete today's (UTC) usage_counters documents (Firestore; daily caps start fresh)"] if reset_usage else []),
         "skip distill; check there are no playbooks" if no_distill else "distill sessions into playbooks (POST /api/distill)",
         f"as Dana, upload {DOC_TITLE}.txt unless a non-failed copy exists, and wait until it is Ready",
         f"skip the skill; check no employee has a skill ({SESSION} stays for a live 'Learn skills')" if no_skill
@@ -56,23 +61,42 @@ def steps(no_skill=False, no_distill=False, clear_share_events=False):
     ]
 
 
-def clear_share_events(database: str) -> int:
-    """Delete all share_events documents in the named Firestore database. Returns how many were deleted."""
+def _firestore(database: str):
     import os
 
     from google.cloud import firestore
-
-    from scripts.clear_traces import guard
     client = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "arched-jetty-502906-q6"), database=database)
     guard(client, database)
-    refs = [d.reference for d in client.collection("share_events").select([]).stream()]
+    return client
+
+
+def _delete(client, database: str, refs: list) -> None:
+    """Batched deletes; the client's database id is re-checked before every batch."""
     for start in range(0, len(refs), BATCH):
         guard(client, database)
         batch = client.batch()
         for ref in refs[start:start + BATCH]:
             batch.delete(ref)
         batch.commit()
+
+
+def clear_share_events(database: str) -> int:
+    """Delete all share_events documents in the named Firestore database. Returns how many were deleted."""
+    client = _firestore(database)
+    refs = [d.reference for d in client.collection("share_events").select([]).stream()]
+    _delete(client, database, refs)
     return len(refs)
+
+
+def reset_usage(database: str, today: str | None = None) -> list[str]:
+    """Delete today's (UTC) usage_counters documents ("{YYYY-MM-DD}-{bucket}"). Returns the deleted ids."""
+    from datetime import datetime, timezone
+
+    client = _firestore(database)
+    today = today or f"{datetime.now(timezone.utc):%Y-%m-%d}"
+    ids = todays_counter_ids((d.id for d in client.collection("usage_counters").select([]).stream()), today)
+    _delete(client, database, [client.collection("usage_counters").document(i) for i in ids])
+    return ids
 
 
 def main():
@@ -84,11 +108,12 @@ def main():
     ap.add_argument("--no-skill", action="store_true", help="leave no skills (learn the BigQuery skill live)")
     ap.add_argument("--no-distill", action="store_true", help="leave no playbooks (run Distill live)")
     ap.add_argument("--clear-share-events", action="store_true", help="delete the share audit log (Guardrails starts empty)")
-    ap.add_argument("--database", default="(default)", help="Firestore database for --clear-share-events")
+    ap.add_argument("--reset-usage", action="store_true", help="delete today's usage counters (caps start fresh)")
+    ap.add_argument("--database", default="(default)", help="Firestore database for --clear-share-events/--reset-usage")
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
     print(f"target: {base}")
-    for i, s in enumerate(steps(args.no_skill, args.no_distill, args.clear_share_events), 1):
+    for i, s in enumerate(steps(args.no_skill, args.no_distill, args.clear_share_events, args.reset_usage), 1):
         print(f"  {i}. {s}")
     if not args.yes:
         print("dry run: pass --yes to execute")
@@ -110,6 +135,9 @@ def main():
     print("\n1. reset"); call("POST", "/api/demo/reset")
     if args.clear_share_events:
         print(f"   share_events deleted: {clear_share_events(args.database)} (database {args.database!r})")
+    if args.reset_usage:
+        ids = reset_usage(args.database)
+        print(f"   usage_counters deleted: {len(ids)} {ids} (database {args.database!r})")
     if args.no_distill:
         pbs = call("GET", "/api/playbooks")
         print(f"2. distill skipped: {len(pbs)} playbooks")

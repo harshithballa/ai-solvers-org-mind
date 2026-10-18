@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from app import skills
 from app.main import app
-from app.models import Message, Session, Skill
+from app.models import Message, Session, Skill, SkillDraftOut, SkillsOut
 from app.seed import BIGQUERY_SESSION_ID, ORG_ID
 
 client = TestClient(app)
@@ -60,18 +60,71 @@ def test_only_owner_can_extract_and_session_needs_messages(fresh_store):
     assert _extract("ses_missing").status_code == 404
 
 
-def test_reextract_replaces_drafts_but_keeps_active(fresh_store):
-    first = _extract().json()["skills"][0]["id"]
-    second = _extract().json()
-    assert second["replaced_drafts"] == 1
-    ids = {s.id for s in fresh_store.list(Skill, source_session_id=BIGQUERY_SESSION_ID)}
-    assert first not in ids and ids == {second["skills"][0]["id"]}
+def test_reextract_same_skill_is_already_learned(fresh_store):
+    first = _extract().json()["skills"][0]
+    second = _extract().json()   # same chat, same skill: the existing draft is kept, nothing new
+    assert second["skills"] == [] and second["replaced_drafts"] == 0
+    assert second["already_learned"] == [{"id": first["id"], "name": first["name"]}]
+    assert [s.id for s in fresh_store.list(Skill, source_session_id=BIGQUERY_SESSION_ID)] == [first["id"]]
 
-    client.post(f"/api/skills/{second['skills'][0]['id']}/approve", json={"employee_id": "e_dana"})
-    third = _extract().json()
-    assert third["replaced_drafts"] == 0
+    client.post(f"/api/skills/{first['id']}/approve", json={"employee_id": "e_dana"})
+    third = _extract().json()   # also when it is active
+    assert third["skills"] == [] and third["already_learned"][0]["id"] == first["id"]
     rows = fresh_store.list(Skill, source_session_id=BIGQUERY_SESSION_ID)
-    assert sorted(s.status for s in rows) == ["active", "draft"]
+    assert [s.status for s in rows] == ["active"]
+
+
+def test_archived_skill_can_be_learned_again(fresh_store):
+    sk = _approved_skill()
+    client.post(f"/api/skills/{sk['id']}/archive", json={"employee_id": "e_dana"})
+    again = _extract().json()
+    assert len(again["skills"]) == 1 and again["already_learned"] == []
+    assert sorted(s.status for s in fresh_store.list(Skill, source_session_id=BIGQUERY_SESSION_ID)) == ["archived", "draft"]
+
+
+def test_different_procedure_from_the_same_chat_is_created(fresh_store, monkeypatch):
+    first = _approved_skill()   # an unmatched *draft* would be replaced, as before; an active one stays
+    other = SkillDraftOut(excluded_specifics=[], name="Request write access to a BigQuery dataset",
+                          description="Ask the data platform team for dataset write access.",
+                          trigger="Permission denied writing to a dataset", steps=["Open a ticket in #data-platform"],
+                          parameters=[], evidence=[0])
+    monkeypatch.setattr(skills, "_fake_extract", lambda msgs: SkillsOut(skills=[other]))
+    res = _extract().json()
+    assert [s["name"] for s in res["skills"]] == [other.name] and res["already_learned"] == []
+    names = sorted(s.name for s in fresh_store.list(Skill, source_session_id=BIGQUERY_SESSION_ID))
+    assert names == sorted([first["name"], other.name])
+
+
+def test_dedup_matches_on_normalized_name_or_similar_name_and_trigger():
+    def sk(name, trigger="t", owner="e_dana"):
+        return Skill(org_id=ORG_ID, owner_employee_id=owner, agent_kind="dev", name=name, description="d",
+                     trigger=trigger, steps=["s"], source_session_id="ses_x")
+    old = sk("Query BigQuery from CLI", "querying acme-analytics with bq")
+    kept, repeated = skills.dedup([sk("  query   BIGQUERY from cli ", "something else entirely")], [old])
+    assert kept == [] and repeated == [old]
+    kept, repeated = skills.dedup([sk("Query BigQuery from CLI!", "querying acme-analytics with bq")], [old])
+    assert kept == [] and repeated == [old]   # embedding of name + trigger is (near) identical
+    new = sk("Rotate the vault token", "vault permission denied on staging deploy")
+    assert skills.dedup([new], [old]) == ([new], [])
+    a, b = sk("Same thing", "x"), sk("same thing", "y")
+    assert skills.dedup([a, b], []) == ([a], [])   # duplicates within one extraction collapse too
+
+
+def test_other_owners_learn_independently(fresh_store):
+    _extract()
+    turns = [m.content for m in fresh_store.list_messages(BIGQUERY_SESSION_ID)]
+    _make_session(fresh_store, "ses_priya_bq", "e_priya", turns)
+    res = _extract("ses_priya_bq", "e_priya").json()
+    assert len(res["skills"]) == 1 and res["already_learned"] == []
+    assert res["skills"][0]["owner_employee_id"] == "e_priya"
+
+
+def test_retrieval_returns_one_skill_per_owner_and_name(fresh_store):
+    sk = _approved_skill()
+    dup = fresh_store.get(Skill, sk["id"]).model_copy(update={"id": "sk_dup_old_data"})   # duplicate from older data
+    fresh_store.put(dup)
+    scored = skills.score_skills(ORG_ID, "dev", "e_dana", BQ_QUESTION)
+    assert len(scored) == 1
 
 
 def test_secret_patterns_are_rejected(fresh_store):
@@ -175,9 +228,9 @@ def test_chat_applies_active_skill_and_cites_it():
 
 
 def test_drafts_and_other_employees_skills_are_not_used():
-    _extract()  # draft only
+    [draft] = _extract().json()["skills"]  # draft only
     assert _ask(_session(), use_skills=True)["message"]["cited_skill_ids"] == []
-    _approved_skill()
+    client.post(f"/api/skills/{draft['id']}/approve", json={"employee_id": "e_dana"})
     res = _ask(_session("e_noah"), use_skills=True)
     assert res["message"]["cited_skill_ids"] == [] and res["skills"]["retrieved"] == []
 

@@ -421,7 +421,8 @@ def extract_skills(body: ExtractSkills):
     found, stats = _skill_call(skills.extract, session, body.employee_id)
     return {"session_id": session.id, "skills": [_skill_payload(sk) for sk in found],
             "proposed": stats.proposed, "rejected": stats.rejected, "redacted": stats.redacted,
-            "replaced_drafts": stats.replaced_drafts}
+            "replaced_drafts": stats.replaced_drafts,
+            "already_learned": [{"id": sk.id, "name": sk.name} for sk in stats.already_learned]}
 
 
 @app.get("/api/skills")

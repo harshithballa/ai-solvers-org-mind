@@ -42,3 +42,10 @@ def test_url_and_token_file_default_to_the_live_service(monkeypatch, capsys):
     assert f"target: {demo_prep.DEFAULT_URL}" in capsys.readouterr().out
     assert demo_prep.DEFAULT_URL == "https://orgmind-207900876373.us-central1.run.app"
     assert demo_prep.DEFAULT_TOKEN_FILE == "~/.config/orgmind/admin_token"
+
+
+def test_reset_usage_is_planned_only_with_the_flag(monkeypatch, capsys):
+    assert "usage_counters" not in dry_run(monkeypatch, capsys)
+    out = dry_run(monkeypatch, capsys, "--reset-usage", "--clear-share-events", "--no-skill", "--no-distill")
+    assert "delete today's (UTC) usage_counters documents" in out and "delete every share_events document" in out
+    assert "dry run" in out
