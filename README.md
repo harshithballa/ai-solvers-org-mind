@@ -1,285 +1,252 @@
 # OrgMind
 
-**Your company's agents learn from each other's conversations.**
-Google Cloud AI Builder Cup prototype. Theme: Future of Work & Enterprise Productivity.
+**An org-wide knowledge layer for AI agents: what one employee works out, every colleague's agent can reuse.**
 
-**Live:** https://orgmind-207900876373.us-central1.run.app (synthetic data, daily cost caps on)
+**Live demo:** https://orgmind-207900876373.us-central1.run.app
 
-| | |
-|---|---|
-| Google services | Gemini on **Vertex AI** (`google-genai` SDK), **Vertex AI Search** (document RAG), **Cloud Storage** (uploaded documents), **Firestore** (all app data), **Cloud Run** (one service: API + static UI), **Secret Manager** (admin token), **Cloud Trace** + **Cloud Logging** (OpenTelemetry spans, correlated JSON logs) |
-| Models | `gemini-2.5-flash` (chat, summarize, compile, skill extraction, share guardrail), `gemini-embedding-001` (768-dim embeddings for clustering and retrieval) |
-| Tests | 134 pytest tests (fake LLM + in-memory store, no GCP credentials needed), plus real-Gemini evals and headless-browser flows (see *Run locally*) |
-| Cost caps | Per-UTC-day global caps (600 Gemini calls, 250 chat messages, 15 distills, 80 new chats, ...) and per-IP hourly caps; see *Cost caps* |
+> Synthetic data only. Daily usage caps apply, so the demo may pause when the cap is reached.
 
 ## The problem
 
-Enterprises roll out AI agents per team (a Dev agent, an HR agent), but every employee's chat session is a silo.
-When five engineers hit the same broken deploy, each one rediscovers the fix, and the knowledge they piece
-together dies in their chat history. The next new hire gets the same generic (sometimes invented) advice.
+Company knowledge sits in silos: team wikis, private documents and individual chat histories. The same problem gets
+solved again and again by different people, because nobody can see that a colleague already fixed it. Even LLM
+assistants grounded on internal data stay isolated per user, so what one conversation works out is lost to the next.
 
-## What OrgMind does
+OrgMind is an org-wide layer that learns from what people do and shares it back.
 
-1. **Agents per team.** Each team gets bundled agents (Dev Agent, HR Agent) built on Gemini.
-2. **Distiller.** It reads sessions across employees, summarizes each one, and clusters problems that recur
-   across **different employees**. Each cluster is compiled into a structured **playbook**: title, trigger,
-   symptoms and steps.
-   - A playbook needs resolved sessions from at least 2 distinct employees. A single person repeating a problem doesn't count.
-   - Only resolved sessions contribute steps. Unresolved attempts are linked as context but never become advice.
-   - Playbooks generalize. Org-wide facts (commands, portal paths, policy limits) are kept. One person's
-     details (names, cost center codes, amounts) are removed and enforced in code.
-3. **Retrieval at answer time.** Agents retrieve relevant playbooks (Gemini embeddings) instead of stuffing
-   raw chat history into context, and they cite them. Only the current session's history is in context.
-4. **Compare view.** The same question goes to the same agent with and without playbooks, side by side.
-5. **Observable.** Every request is traced in Cloud Trace, every Gemini call is visible in the in-app Traces view,
-   and logs are correlated with traces in Cloud Logging.
+## What it does today
 
-The app opens on the **User** workspace (`#/user`): pick who you are viewing as (any seeded employee), choose an
-agent, chat with Playbooks / Skills / My documents toggles, and manage your documents and skills under *My knowledge*.
-**Admin** is a small header link (Knowledge, Traces, Roadmap, plus previews of what comes next); `#/admin/<tab>`
-deep-links into any admin tab. All data is synthetic ("Acme Corp").
-
-## What's real vs planned
-
-Same status legend as the in-app **Admin › Roadmap** page. Preview tabs are labelled *Preview · planned*, every
-control on them is disabled, and they make no network calls.
-
-| Area | Item | Status |
-|---|---|---|
-| Users / Teams | Synthetic Acme employees, each with siloed sessions | ✅ Working now |
-| Users / Teams | User workspace: view as any employee, chat, My knowledge | ✅ Working now |
-| Users / Teams | Users & Teams admin, directory sync (*Admin › Users & Teams*) | 🟠 December round |
-| Agents | Dev Agent and HR Agent on Gemini 2.5 Flash (Vertex AI) | ✅ Working now |
-| Agents | Playbook retrieval + citations in answers | ✅ Working now |
-| Agents | Document upload + RAG on Vertex AI Search (private unless shared) (*User › My knowledge*) | ✅ Working now |
-| Agents | Daily cost caps (global + per IP) with today's usage vs limits (*Admin › Traces*) | ✅ Working now |
-| Agents | Agent builder: create / edit agents (*Admin › Agents*) | 🟠 December round |
-| Agents | MCP server registry (*Admin › MCPs*) | 🟠 December round |
-| Agents | ADK on Vertex AI Agent Engine | 🟠 December round |
-| Agents | Task sub-agents that load skills (*Admin › Skills & Sub-agents*) | 🟠 December round |
-| Agents | MCP connections: Jenkins, GitHub, Drive, Slack | 🟠 December round |
-| Distillation | Summarize → cluster across employees → compile playbooks | ✅ Working now |
-| Distillation | Only resolved sessions give steps; per-person values dropped | ✅ Working now |
-| Distillation | Traces: Cloud Trace + in-app trace view (*Admin › Traces*) | ✅ Working now |
-| Distillation | Upload local assistant sessions | 🟠 December round |
-| Distillation | PII redaction of sessions before distill | 🟠 December round |
-| Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
-| Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
-| Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private unless shared) | ✅ Working now |
-| Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (patterns + Gemini, fail closed; not a guarantee) (*Admin › Guardrails*) | ✅ Working now |
-| Playbooks / Skills | Share audit log: every share attempt with its verdict and finding categories (*Admin › Guardrails*) | ✅ Working now |
-| Playbooks / Skills | Human review of shared items and playbooks before publish | 🟠 December round |
-| Playbooks / Skills | Skill creation from playbooks | 🟠 December round |
+- **Documents (RAG):** employees upload files, and agents answer from them with citations (Vertex AI Search).
+- **Skills:** an agent learns a reusable procedure from one employee's chat. It stays a private draft until the owner approves it.
+- **Playbooks:** the distiller finds problems that two or more employees resolved separately and compiles them into one cited fix.
+- **Guarded sharing:** documents and skills can be shared org-wide only after an automatic PII and secret check (regex detectors plus Gemini).
+- **Agents:** a Dev agent and an HR agent on Gemini 2.5 Flash. Playbooks, Skills and Documents are per-chat toggles.
+- **Compare:** the same question side by side, answered without and with org knowledge.
+- **Traces:** every request is traced in Cloud Trace, and every Gemini call shows in the in-app Traces view.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    U[Employee browser<br/>static HTML/JS] -->|JSON API| API
-
-    subgraph CR[Cloud Run service: orgmind]
-        API[FastAPI<br/>app/main.py]
-        AG[Answer pipeline<br/>app/agent.py]
-        RT[Playbook retrieval<br/>app/retrieval.py]
-        DS[Distiller<br/>app/distiller.py]
-        ST[Store interface<br/>app/store.py]
-        API --> AG --> RT
-        API --> DS
-        AG --> ST
-        RT --> ST
-        DS --> ST
-    end
-
-    subgraph V[Vertex AI]
-        GM[Gemini 2.5 Flash<br/>structured JSON output]
-        EM[gemini-embedding-001]
-    end
-
-    AG -->|answer + cited playbook ids| GM
-    DS -->|summarize, compile playbook| GM
-    RT -->|query embedding| EM
-    DS -->|summary + playbook embeddings| EM
-    ST --> FS[(Firestore<br/>orgs, employees, agents,<br/>sessions/*/messages, playbooks,<br/>llm_calls)]
-
-    subgraph OBS[Observability]
-        CT[Cloud Trace<br/>via OTLP to telemetry.googleapis.com]
-        CL[Cloud Logging<br/>JSON logs + trace id]
-    end
-    API -.->|spans: request, retrieval,<br/>Gemini calls, Firestore writes| CT
-    API -.->|structured logs| CL
-    SM[Secret Manager<br/>orgmind-admin-token] -->|ORGMIND_ADMIN_TOKEN| API
+  U["Browser<br/>User and Admin pages"] -->|HTTPS| CR
+  subgraph CR["Cloud Run: FastAPI + web UI"]
+    direction TB
+    A["Chat and retrieval"]
+    D["Documents"]
+    S["Skills"]
+    G["Share check"]
+    X["Distiller"]
+  end
+  CR -->|generate| GEM["Gemini 2.5 Flash<br/>Vertex AI"]
+  CR -->|vectors| EMB["gemini-embedding-001<br/>Vertex AI"]
+  CR -->|search| VS["Vertex AI Search"]
+  CR -->|state| FS["Firestore"]
+  CR -->|files| GCS["Cloud Storage"]
+  SM["Secret Manager"] -->|admin token| CR
+  CR -.->|spans and logs| TR["Cloud Trace + Logging"]
 ```
 
-Distill pipeline: **summarize** each new or changed session (cached, run in parallel) → **cluster** per agent
-with complete-linkage on embeddings → **gate** (≥ 2 distinct employees with resolved sessions) → **compile**
-playbooks in parallel → **match** existing playbooks (update and bump the version) or create new ones.
+*One Cloud Run service serves the API and the UI. Gemini, embeddings, search, storage and observability are managed Google Cloud services.*
 
-## Configuration
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant V as Gemini
+  participant F as Firestore
+  participant T as Cloud Trace
+  B->>CR: message
+  CR->>F: read chat history
+  Note over CR: Toggles on: playbooks, then skills, then document passages are retrieved and added to the prompt
+  CR->>V: prompt
+  V-->>CR: answer
+  CR->>F: save messages + call log
+  CR--)T: spans
+  CR-->>B: answer
+```
 
-| Env var | Default | Purpose |
-|---|---|---|
-| `GOOGLE_CLOUD_PROJECT` | (none) | GCP project for Vertex AI and Firestore |
-| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex AI region |
-| `ORGMIND_STORE` | `memory` | `memory` (zero setup) or `firestore` |
-| `ORGMIND_FIRESTORE_DATABASE` | `(default)` | Firestore database name |
-| `ORGMIND_LLM` | `vertex` if project set, else `fake` | `fake` is a deterministic stub for tests and offline UI work |
-| `ORGMIND_CHAT_MODEL` | `gemini-2.5-flash` | Chat/summarize/compile model |
-| `ORGMIND_EMBED_MODEL` | `gemini-embedding-001` | Embedding model (768 dims) |
-| `ORGMIND_CLUSTER_THRESHOLD` | `0.88` | Similarity needed to cluster sessions |
-| `ORGMIND_RETRIEVAL_THRESHOLD` | `0.62` | Similarity needed to offer a playbook to the agent |
-| `ORGMIND_TRACING` | `off` | `cloudtrace` exports OpenTelemetry spans to Cloud Trace (via OTLP); `off` locally and in tests |
-| `ORGMIND_TRACE_CAP` | `500` | Max recorded LLM calls kept for the in-app Traces view |
-| `ORGMIND_RAG_PROVIDER` | `off` | Document RAG: `vertex` (GCS + Vertex AI Search), `fake` (in-memory keyword overlap, tests) or `off` (app behaves exactly as without RAG) |
-| `ORGMIND_RAG_DATASTORE` | (none) | Discovery Engine data store ID (unstructured, `default_collection`, `default_search` serving config) |
-| `ORGMIND_RAG_BUCKET` | (none) | GCS bucket for uploaded documents (`private/{employee_id}/{doc_id}-{filename}`) |
-| `ORGMIND_RAG_LOCATION` | `global` | Data store location |
-| `ORGMIND_RAG_MIN_SCORE` | `0.25` | Search hits under this `semanticRelevanceScore` count as "not covered" |
-| `ORGMIND_SKILL_MIN_SCORE` | `0.6` | Cosine similarity needed to offer an active skill to the agent (measured: related 0.70–0.79, unrelated 0.46–0.57) |
-| `ORGMIND_LIMITS` | `on` | Cost caps for the public demo; `off` disables them (tests and eval scripts) |
-| `ORGMIND_LIMIT_<BUCKET>` | see below | Per-UTC-day global caps: `GEMINI_CALLS` 600, `CHAT_MESSAGES` 250, `DISTILL` 15, `SKILLS_EXTRACT` 30, `SHARE_SCANS` 40, `COMPARE` 120, `RAG_UPLOADS` 20, `SESSIONS_CREATED` 80 |
-| `ORGMIND_IP_LIMIT_<BUCKET>` | `CHAT_MESSAGES` 40, `DISTILL` 3 | Best-effort per-client-IP caps per hour (in memory, per instance) |
-| `ORGMIND_ADMIN_TOKEN` | (none) | Required `X-Admin-Token` for `POST /api/demo/reset`. Reset is **disabled** when unset. On Cloud Run it comes from Secret Manager |
+*Chat message: only the current chat's history goes into the prompt, along with any knowledge retrieved through the toggles.*
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant F as Firestore
+  participant GCS as Cloud Storage
+  participant VS as Vertex AI Search
+  B->>CR: upload file
+  CR->>F: record (uploading)
+  CR->>GCS: save file
+  CR->>VS: import from Cloud Storage URI
+  CR->>F: record (indexing)
+  CR-->>B: accepted
+  VS->>GCS: read file
+  loop UI polls the document list
+    B->>CR: list documents
+    CR->>VS: check import status
+    VS-->>CR: status
+    opt import finished
+      CR->>F: mark ready
+    end
+    CR-->>B: status
+  end
+```
+
+*Document upload and index: the file goes to Cloud Storage and Vertex AI Search imports it from there. Status is checked on each list request; there is no background worker.*
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant VS as Vertex AI Search
+  participant F as Firestore
+  participant GCS as Cloud Storage
+  participant V as Gemini
+  B->>CR: question
+  CR->>VS: search
+  VS-->>CR: passages
+  CR->>F: docs this user may see (own + org-shared)
+  Note over CR: Drop hits that are not visible or below the minimum score
+  opt snippet too short
+    CR->>GCS: fetch full text
+  end
+  CR->>V: question + passages
+  V-->>CR: answer + citations
+  CR-->>B: answer
+```
+
+*Document question: the search index knows nothing about owners. Visibility is enforced in Cloud Run against Firestore after the search.*
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant GCS as Cloud Storage
+  participant V as Gemini
+  participant F as Firestore
+  B->>CR: share
+  opt document
+    CR->>GCS: read text
+  end
+  Note over CR: Regex scan for emails, phones, cards, keys
+  CR->>V: scan text
+  V-->>CR: findings
+  alt clean
+    CR->>F: scope = org
+    CR->>F: audit log (share)
+    CR-->>B: shared
+  else blocked, or scan failed
+    CR->>F: audit log (categories only)
+    CR-->>B: blocked, masked findings
+  end
+```
+
+*Sharing with the org: both checks must come back clean in the same request. If the Gemini check fails, nothing is shared.*
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant F as Firestore
+  participant V as Gemini
+  participant E as Embeddings
+  B->>CR: learn skills from this chat
+  CR->>F: read chat
+  CR->>V: extract procedures
+  V-->>CR: candidate skills
+  Note over CR: Checks for evidence and secrets, personal values redacted
+  CR->>F: read existing skills from this chat
+  CR->>E: dedupe (similarity)
+  CR->>E: embed for retrieval
+  CR->>F: replace old drafts, save new drafts
+  CR-->>B: drafts (private until approved and shared)
+```
+
+*Skill learning: a skill the employee already learned from the same chat is reported as "already learned" and is not saved again.*
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant CR as Cloud Run
+  participant F as Firestore
+  participant V as Gemini
+  participant E as Embeddings
+  B->>CR: Distill
+  CR->>F: read sessions and new messages
+  par up to 8 chats in parallel
+    CR->>V: summarize
+    CR->>E: embed summary
+    CR->>F: save summary
+  end
+  CR->>F: read existing playbooks
+  Note over CR: Cluster by similarity. Keep clusters resolved by 2+ different employees
+  par up to 8 playbooks in parallel
+    CR->>F: read source chats
+    CR->>V: compile playbook
+    CR->>E: embed playbook
+  end
+  CR->>F: save playbooks (new, or version bump)
+  CR-->>B: playbooks
+```
+
+*Distill: only resolved chats contribute steps, and summaries are cached, so a re-run only summarizes new or changed chats.*
 
 ## Run locally
 
+Offline (fake LLM, in-memory store, no GCP account needed):
+
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-
-# Offline, no GCP needed (fake LLM, in-memory store)
-.venv/bin/uvicorn app.main:app --port 8080
-
-# Real Gemini (after `gcloud auth application-default login`)
-GOOGLE_CLOUD_PROJECT=<project> ORGMIND_ADMIN_TOKEN=<choose-one> .venv/bin/uvicorn app.main:app --port 8080
+.venv/bin/uvicorn app.main:app --port 8080        # http://localhost:8080
 ```
 
-Open http://localhost:8080.
-
-Tests and evals:
+Real Gemini (after `gcloud auth application-default login`):
 
 ```bash
-.venv/bin/pytest -q                                              # 134 unit + API tests (fake LLM, no GCP needed)
-GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions        # 12 fixed questions, real Gemini
-GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions --url https://<service-url>
-GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.skills_eval           # skill extraction + use, real Gemini
-.venv/bin/python -m scripts.rag_smoke --gemini                                     # real Vertex AI Search data store
-GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.firestore_persistence_check --database orgmind-test
-ORGMIND_ADMIN_TOKEN=<token> .venv/bin/python scripts/demo_flow.py --url <url>     # headless browser demo flow
-.venv/bin/python scripts/ui_tabs_check.py --url <url>    # every tab at desktop + phone width, preview rules
-.venv/bin/python scripts/user_flow.py --url <url>        # User workspace with real Gemini + Vertex AI Search (fresh memory-store server)
-GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.guardrail_eval          # share guardrail, real Gemini
+GOOGLE_CLOUD_PROJECT=<project> ORGMIND_ADMIN_TOKEN=<choose-one> \
+  .venv/bin/uvicorn app.main:app --port 8080
+# add ORGMIND_STORE=firestore for Firestore, and the RAG variables below for documents
 ```
 
-The browser scripts need Chromium: `.venv/bin/playwright install chromium` (or a system `chromium` on `PATH`).
-
-## Document RAG (Phase 1, `rag-skills` branch)
-
-Employees upload their own documents and agents answer grounded in them, with citations.
-
-- **Upload** `POST /api/rag/docs`: multipart (`employee_id`, `file`, optional `title`; `.txt` `.md` `.pdf`, max 5 MB)
-  or JSON `{employee_id, title, text}` (saved as `.txt`). The file goes to GCS under
-  `private/{employee_id}/{doc_id}-{filename}`, and a Discovery Engine import starts (`data_schema=content`,
-  `INCREMENTAL`). The response has `status=indexing`.
-- **List** `GET /api/rag/docs?employee_id=`: the employee's own docs plus `scope=org` docs. Docs still indexing are
-  checked against their import operation on read (no background workers).
-- **Search** `POST /api/rag/search {employee_id, query}`: Vertex AI Search (10 results, extractive segments +
-  snippets), each hit mapped back to `rag_docs` by its GCS URI. Unmapped hits, hits the employee may not see, and hits
-  under `ORGMIND_RAG_MIN_SCORE` are dropped; the top 3 are returned.
-- **Chat** `POST /api/sessions/{id}/messages` with `use_rag: true`: excerpts are injected after playbooks as
-  "Document excerpts", the model answers only from playbooks and excerpts (saying so when they don't cover the
-  question), and `cited_doc_ids` is stored on the message. A RAG failure never fails the chat: the answer is generated
-  without documents and `rag.error` explains why.
-- **Ownership lives in our store** (`rag_docs`), never in the search index. `rag_docs` survives *Reset demo*,
-  because its rows own real GCS objects and index documents.
-- Spans: `rag.upload`, `rag.import`, `rag.import.status`, `rag.search` (result count, latency, scope-drop count).
-- Smoke test against the real data store: `python -m scripts.rag_smoke [--gemini]`.
-- To enable on Cloud Run (not done yet), the runtime service account additionally needs `roles/discoveryengine.editor`
-  on the project and `roles/storage.objectAdmin` on the bucket.
-
-## Skills (Phase 2, `rag-skills` branch)
-
-Three kinds of knowledge, kept distinct in code and docs:
-
-| | What it is | Built from | Visible to |
+| Group | Env var | Default | Purpose |
 |---|---|---|---|
-| **Playbook** (`app/distiller.py`) | Org-wide fix for one recurring problem | Resolved sessions of **2+ employees** hitting the same problem | Everyone (per agent) |
-| **RAG doc** (`app/rag_docs.py`) | Raw uploaded source material, searched at answer time | An employee's upload | Owner, or everyone if `scope=org` |
-| **Skill** (`app/skills.py`) | A reusable procedure **one** employee's agent worked out in **one** conversation | One session | Owner, or everyone once shared (`scope=org`, see Sharing) |
+| GCP | `GOOGLE_CLOUD_PROJECT` | (none) | Project for Vertex AI and Firestore. Without it the app runs in fake-LLM mode |
+| GCP | `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex AI region |
+| GCP | `ORGMIND_STORE` | `memory` | `memory` (zero setup) or `firestore` |
+| GCP | `ORGMIND_FIRESTORE_DATABASE` | `(default)` | Firestore database id |
+| GCP | `ORGMIND_ADMIN_TOKEN` | (none) | Needed for *Reset demo*; reset is disabled when unset. On Cloud Run it comes from Secret Manager |
+| GCP | `ORGMIND_TRACING` | `off` | `cloudtrace` exports spans to Cloud Trace over OTLP |
+| Models | `ORGMIND_LLM` | `vertex` if a project is set, else `fake` | `fake` is a deterministic stub for tests and offline UI work |
+| Models | `ORGMIND_CHAT_MODEL` | `gemini-2.5-flash` | Chat, summarize, compile, skill extraction, share check |
+| Models | `ORGMIND_EMBED_MODEL` | `gemini-embedding-001` | Embeddings (768 dimensions) |
+| Retrieval | `ORGMIND_CLUSTER_THRESHOLD` | `0.88` | Similarity needed to cluster chats in Distill |
+| Retrieval | `ORGMIND_RETRIEVAL_THRESHOLD` | `0.62` | Similarity needed to offer a playbook to the agent |
+| Retrieval | `ORGMIND_SKILL_MIN_SCORE` | `0.6` | Similarity needed to offer a skill to the agent |
+| RAG | `ORGMIND_RAG_PROVIDER` | `off` | `vertex` (Cloud Storage + Vertex AI Search), `fake` (tests) or `off` |
+| RAG | `ORGMIND_RAG_DATASTORE` | (none) | Vertex AI Search data store id |
+| RAG | `ORGMIND_RAG_BUCKET` | (none) | Cloud Storage bucket for uploaded documents |
+| RAG | `ORGMIND_RAG_LOCATION` | `global` | Data store location |
+| RAG | `ORGMIND_RAG_MIN_SCORE` | `0.25` | Search hits below this score count as not covered |
+| Cost caps | `ORGMIND_LIMITS` | `on` | Daily global and hourly per-IP caps; `off` in tests and evals |
+| Cost caps | `ORGMIND_LIMIT_<BUCKET>` | e.g. `GEMINI_CALLS` 600 | Per-UTC-day caps; buckets and defaults are in `app/config.py` |
 
-- **Extract** `POST /api/skills/extract {session_id, employee_id}` (session owner only, at least 4 messages): one
-  Gemini call returns 0–2 skills (name, description, trigger, steps, parameters as names only, evidence message
-  indexes). The writer only extracts confirmed procedures, keeps org-wide facts and turns personal values into
-  `{parameters}`. Deterministic post-checks reject skills without valid evidence or with secret-like strings
-  (AWS keys, bearer tokens, emails, long hex/base64) and redact values the model itself flagged as personal.
-  Re-extracting replaces the session's **draft** skills only. New skills are `scope=private`, `status=draft`.
-- **Review** `GET /api/skills?employee_id=` (own skills + active org skills; drafts only to their owner),
-  `POST /api/skills/{id}/approve` (draft → active), `/archive`, and `PATCH /api/skills/{id}` (name, description,
-  steps; bumps `version`). Owner only.
-- **Use** `use_skills: true` on the messages endpoint: the top 2 **active** skills for this agent kind visible to
-  the employee, above `ORGMIND_SKILL_MIN_SCORE`, go into a "Skills you have learned" block (after playbooks, before
-  document excerpts). The agent gives the steps and asks only for the listed parameters; `cited_skill_ids` is stored
-  on the message. Failures degrade to an answer without skills.
-- Spans: `skills.extract` (proposed/saved/rejected/redacted counts, latency) and `skills.retrieve` (candidates,
-  kept, top score). Extraction calls appear in `llm_calls` as `extract_skills`.
+## Tests
 
-## Sharing with the org (Phase 4)
+```bash
+.venv/bin/pytest -q          # 151 tests, fake LLM + in-memory store, no GCP needed
+```
 
-An owner can share an **active** skill or a **ready** text document with the whole org. Colleagues then see it
-under *Shared by colleagues*, read-only, and their agents can retrieve and cite it with "Shared by <name>".
-- **Guardrail first** (`app/guardrail.py`). Layer 1: patterns (emails, international and Indian phone numbers,
-  Luhn-valid card numbers, Aadhaar- and SSN-style numbers, PAN, AWS access keys, bearer tokens/JWTs, private keys,
-  32+ character hex/base64 strings). Layer 2: a Gemini structured-output check that flags personal contact details,
-  identifiers, credentials, personal sandbox/project IDs, addresses, and health or financial details of individuals,
-  and does not flag org-wide facts (channels, role handles, tools, datasets, ticket IDs, policy values).
-  Publishing needs both layers clean, in the same request. **Fail closed:** if the Gemini check errors, nothing is
-  shared ("couldn't verify, try again"). Findings carry a category and a masked preview (e.g. `d***@g***.com`)
-  everywhere: API, UI, logs, spans and `share_events`. The scan is automatic and can miss things, so it is a
-  safety net, not a guarantee. **There is no human review yet** (planned for the December round).
-- `POST /api/skills/{id}/share|unshare`, `POST /api/rag/docs/{id}/share|unshare` (owner only). PDFs can't be scanned
-  yet, so they can't be shared; text over 200 KB is too large to scan. Editing a shared skill makes it private again
-  until it is re-scanned. Sharing a document flips our own scope field, so it is instant (no re-import).
-- `POST /api/rag/docs/{id}/share-redacted`: a new document "<title> (redacted)" with every finding replaced by
-  `[REDACTED:<CATEGORY>]`, re-scanned and published only if clean (it then indexes like any upload). The original
-  stays private.
-- Every attempt is logged in `share_events` (categories only); *Admin › Guardrails* shows the detectors,
-  clean/blocked counts and the last 20 events.
-- `python -m scripts.guardrail_eval` checks the guardrail against real Gemini.
+Evals and browser checks against real Gemini and Vertex AI Search (Chromium via `.venv/bin/playwright install chromium`):
 
-## Demo prep
+```bash
+GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.eval_questions    # playbook answers, leak checks
+GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.skills_eval       # skill extraction and use
+GOOGLE_CLOUD_PROJECT=<project> .venv/bin/python -m scripts.guardrail_eval    # share check
+.venv/bin/python -m scripts.rag_smoke --gemini                                 # Vertex AI Search data store
+.venv/bin/python scripts/ui_tabs_check.py --url <url>                          # every tab, desktop and phone width
+```
 
-`python -m scripts.demo_prep` prepares the demo state on a running server. It is a dry run (prints the plan) unless
-`--yes` is passed. Default: reset, distill, upload and wait for `acme-bq-onboarding` as Dana, learn and approve the
-BigQuery skill from her chat `ses_seed_14`, share the doc and the skill (guardrail scan), print the final state.
-All requests carry the admin token, so they don't count against the cost caps.
-
-| Flag | Effect |
-|---|---|
-| `--base-url` | Server to prepare; default `https://orgmind-207900876373.us-central1.run.app` |
-| `--admin-token-file` | File holding the admin token; default `~/.config/orgmind/admin_token` (never printed) |
-| `--no-skill` | No skill is extracted/approved/shared; checks no employee has a skill. `ses_seed_14` stays, so *Learn skills from this chat* can run live |
-| `--no-distill` | No distill; checks there are no playbooks, so *Admin › Knowledge* shows its empty state and *Distill sessions* can run live |
-| `--clear-share-events` | Deletes every `share_events` document (a reset keeps this audit log), so *Admin › Guardrails* starts empty; prints the count. Talks to Firestore directly (`--database`, default `(default)`) |
-| `--reset-usage` | Deletes only today's (UTC) `usage_counters` documents, so every daily cap starts fresh; prints the deleted ids. Earlier days are kept. Same Firestore access and database check as `--clear-share-events` |
-
-The shared `acme-bq-onboarding` document is prepared in every mode. For a live recording:
-`python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events --reset-usage`.
-
-`python -m scripts.record_prep` does the whole recording setup on the main URL: purges `test-` docs, runs that
-demo_prep command, uploads `~/test-contact.txt` (synthetic email + phone) as Dana and waits for Ready, clears traces
-and checks the state. After recording, `python -m scripts.record_prep --finish` restores the judge-ready default state
-(2 playbooks, Dana's shared skill and doc) and asserts it. `--dry-run` prints the actions only.
-
-## Seed and reset
-
-- On startup the app seeds Acme Corp **only if the store is empty**: 8 employees, Dev + HR agents and
-  15 scripted sessions. Those include a recurring vault-token problem (3 resolved, 1 unresolved), a stipend
-  problem raised by 3 employees, a problem one employee repeated, a recurring problem nobody solved (Kafka),
-  some unrelated noise, and Dana's BigQuery session (`ses_seed_14`, one employee working out a reusable procedure:
-  the skill-extraction demo; it forms no cluster and no playbook).
-- Summaries, clusters and playbooks are always computed live by Gemini. Nothing is pre-baked.
-- **Reset demo** (top-right button on Admin pages, or `curl -X POST -H "X-Admin-Token: $ORGMIND_ADMIN_TOKEN" <url>/api/demo/reset`)
-  wipes sessions and playbooks and re-seeds.
-
-## Deploy (Cloud Run)
+## Deploy on Cloud Run
 
 ```bash
 gcloud run deploy orgmind --source . --region us-central1 \
@@ -289,113 +256,26 @@ gcloud run deploy orgmind --source . --region us-central1 \
   --set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest
 ```
 
-Document RAG adds (to an existing service, use `--update-env-vars`, never `--set-env-vars`, which drops the rest):
+To add documents to an existing service, use `--update-env-vars` (`--set-env-vars` drops the rest):
 `ORGMIND_RAG_PROVIDER=vertex,ORGMIND_RAG_DATASTORE=<data store id>,ORGMIND_RAG_BUCKET=<bucket>,ORGMIND_RAG_LOCATION=global,ORGMIND_RAG_MIN_SCORE=0.25`.
-Leave `ORGMIND_LIMITS` unset (cost caps on). To try a revision before it serves traffic, add
-`--no-traffic --tag <name>` and use the tagged URL.
+To try a revision before it serves traffic, add `--no-traffic --tag <name>` and use the tagged URL.
 
 The runtime service account needs `roles/aiplatform.user`, `roles/datastore.user`, `roles/cloudtrace.agent`,
-`roles/logging.logWriter`, and `roles/secretmanager.secretAccessor` on the `orgmind-admin-token` secret; for RAG
-also `roles/discoveryengine.editor` on the project and `roles/storage.objectAdmin` on the bucket.
+`roles/logging.logWriter` and `roles/secretmanager.secretAccessor` on the secret. For documents it also needs
+`roles/discoveryengine.editor` on the project and `roles/storage.objectAdmin` on the bucket.
 
-## Demo script (3–4 min)
+## Real vs planned
 
-Before each take: open **Admin** (header link), click **Reset demo** (top right, admin token). Start on **Admin › Knowledge** (Compare); the app itself opens on the User workspace.
+| Area | Working now | Planned (December round) |
+|---|---|---|
+| Knowledge | Documents RAG, skills, playbooks | Self-improving agents and sub-agents |
+| Sharing | Guarded org-wide sharing (regex + Gemini, fail closed) | QA model + human reviewer for shared items, Cloud DLP |
+| Agents | Dev and HR agents, Compare view | Google ADK on Agent Engine, MCP connectors |
+| Operations | Cloud Trace, in-app Traces, daily usage caps | Sign-in and per-org isolation |
 
-1. **The silo (Admin › Knowledge).** Pick *Dev Agent* and click the first preset, *"My staging deploy is failing
-   with ACME_VAULT_TOKEN expired."* The left answer is generic, and Gemini often invents an `acme vault login`
-   command. The right answer says *"No playbook matched"*. There's no org knowledge yet.
-2. **Distill.** Click **Distill sessions** in the *Org knowledge* panel. While it runs (10–55s) the button counts
-   seconds and the report shows *Summarizing sessions → clustering → writing playbooks*. The report then shows
-   15 sessions, 4 recurring clusters and per-phase timings:
-   - **created**: vault-token playbook (Priya, Marcus, Sofia resolved it; Tom didn't)
-   - **skipped**: Docker builds, *resolved by only one employee*
-   - **skipped**: Kafka lag, *recurring, but nobody has resolved it yet*
-   - **created**: home-office stipend playbook (3 employees)
-3. **Ask again.** Click the same preset. The right side now gives the real Acme fix: VPN → `acme auth refresh --vault`
-   → `staging-deployers` via #platform-access → `ACME_VAULT_ROLE` for CI. It cites the playbook.
-4. **Provenance.** Click the citation chip. The playbook shows its trigger and steps, and which employees it was
-   distilled from. Tom's unresolved session is flagged *not used for steps*.
-5. **No false matches.** Click the third preset (*"image not found in registry"*). It uses the same command but has
-   a different error. The playbook is retrieved but **not** applied, so it cites nothing.
-6. **New hire (User workspace, `#/user`).** You're viewing as *Dana Kim (new hire)*. Turn on **Playbooks**, start a chat and ask
-   about the vault error, then follow up with *"I ran acme auth refresh --vault on the VPN, but acme deploy staging
-   still says vault permission denied. Which group do I need and how do I request access?"* The agent continues from
-   the playbook's `staging-deployers` step.
-7. **HR, without leaking.** Switch to *Noah Fischer* + *HR Agent* and ask about a rejected home-office stipend. The
-   answer gives the AcmePeople path, the *Remote Work Stipend* category and the $500 limit. It never mentions another
-   employee's cost center.
-8. **Under the hood (Trace button / Admin › Traces).** Each request shows its Gemini calls with model, latency,
-   tokens and the playbooks used; *Cloud Trace ↗* opens the full span tree.
-9. **What's next (Admin › Roadmap).** Working now vs the December round.
+Honest limits:
+- All data is synthetic (the fictional company "Acme Corp").
+- There is no sign-in. The "Viewing as" switch is a demo convenience, not access control.
+- The automatic PII and secret check is a safety net, not a guarantee.
 
-## Observability
-
-- **Cloud Trace.** With `ORGMIND_TRACING=cloudtrace`, each chat, distill and compare request produces one trace
-  (OpenTelemetry). Child spans cover playbook retrieval, every Gemini generate/embed call (model, latency, token
-  usage, playbooks used) and Firestore writes. On Cloud Run the spans join the platform's request trace. Spans are
-  flushed before the response returns, because Cloud Run throttles CPU afterwards (about 50–100ms per request).
-  Tracing is optional and can never fail a request.
-- **Export goes through OTLP.** The standard Cloud Trace exporter (`opentelemetry-exporter-gcp-trace` /
-  `CloudTraceSpanExporter`, now deprecated) silently dropped our spans: none arrived in Cloud Trace. OrgMind
-  therefore exports over **OTLP/gRPC to `telemetry.googleapis.com`** (the Telemetry API), Google's recommended
-  ingestion path.
-- **Cloud Logging.** On Cloud Run, logs are JSON lines with `severity` and `logging.googleapis.com/trace`, so each
-  request summary and LLM-call log links to its trace.
-- **In-app traces.** Every LLM call is also recorded (operation, model, latency, tokens, playbook IDs, error and a
-  truncated prompt/response excerpt) in a capped `llm_calls` collection. You can see them at
-  `GET /api/traces?limit=50`, in **Admin › Traces** and in the **Trace** drawer on both pages, with links to Cloud
-  Trace.
-
-## Security
-
-- **Admin token in Secret Manager.** `POST /api/demo/reset` requires `X-Admin-Token`. On Cloud Run the token is
-  mounted from Secret Manager (`--set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest`, `secretAccessor`
-  only for the runtime service account) instead of a plain env var. Reset is disabled when the token is unset.
-- **Synthetic data only.** No real people or credentials. The distiller already removes per-person values (names,
-  cost centers, amounts) from playbooks, enforced in code.
-- **Sharing is guarded automatically** (patterns + Gemini, fail closed; see *Sharing with the org*). It is not a
-  guarantee.
-- **Planned for the December round:** human review before a shared item or playbook publishes, and PII redaction of sessions
-  before they reach the distiller.
-- Public demo: chat, compare and distill are unauthenticated and call Gemini; `--max-instances 1` caps spend.
-
-## Cost caps
-
-The public deployment bounds worst-case spend (budget: INR 1,000 for the judging window).
-- Daily global counters per bucket (`usage_counters`, doc id `{UTC date}-{bucket}`, atomic increments). Every real
-  Gemini call is counted inside `app/llm.py`, including calls made by distill, extraction and share scans.
-  Distill, extraction and compare first check that enough Gemini calls remain, so they are refused up front
-  instead of failing half way.
-- Over a limit: HTTP 429 `{"detail", "limit", "resets": "00:00 UTC"}`, shown inline in the UI. Messages over 2,000
-  characters get 413; a chat stops at 60 messages (409). Chat answers use `max_output_tokens=2048`.
-- Requests with the valid `X-Admin-Token` are neither counted nor limited (the UI sends the token once it has been
-  entered in the Reset demo prompt). If the counter store fails, requests are allowed (fail open).
-- `GET /api/usage` (admin token) shows today's counts against the limits, also on *Admin › Traces*.
-- Measured with `python -m scripts.cost_estimate` (real Gemini; prices and sources are in the script): a chat answer
-  costs about $0.0009 (INR 0.08), a distill $0.013 (INR 1.1), a skill extraction $0.0012, a compare $0.0010. The 600
-  Gemini-call ceiling caps Gemini spend at well under INR 50 a day; every bucket at its cap is about INR 141 a day,
-  most of it Vertex AI Search queries, which the 10,000 free queries a month normally cover.
-  Not included: Cloud Run, Firestore and Cloud Trace.
-
-## Limitations
-
-- **Synthetic data only.** All employees, chats, documents and playbooks are fictional ("Acme Corp").
-- **No sign-in in the prototype.** The "Viewing as" switcher selects a synthetic employee, and the API takes the
-  employee id from the request. A chat can be opened by its id (`GET /api/sessions/{id}`) without an owner check.
-- **The share guardrail is automatic and not a guarantee.** Patterns + Gemini, fail closed; it can miss things.
-- **Planned for the December round:** sign-in, per-org isolation, and human review before a shared item or
-  playbook publishes.
-- **Live Distill can take 20–55s.** Most calls are fast (~1s per summary), but in traces a few `summarize` calls
-  take ~20s. That is most likely Vertex AI rate-limit (429) retries with backoff during the parallel summarize
-  burst. The UI shows an elapsed timer while it runs. Tuning summarize concurrency and retry/backoff is planned.
-
-## Roadmap
-
-- **December (final) round:** move agents to **ADK on Vertex AI Agent Engine** with sub-agents, **MCP connections**
-  (Jenkins, GitHub, Google Drive, Slack), **upload** of local and external assistant sessions, **skill creation**
-  from playbooks, Users & Teams admin with directory sync, an agent builder, an MCP server registry, human review
-  before publish (shared items and playbooks), PII redaction of sessions before distill, and sign-in with per-org
-  isolation. (The automatic share guardrail is already working.)
-- Also planned: tuning summarize concurrency and retry/backoff for faster Distill, per-team access control on
-  playbooks, and feedback signals (did the playbook help?) to rank and retire playbooks.
+Demo preparation, the recording setup and a walkthrough script are in [docs/DEMO.md](docs/DEMO.md).
