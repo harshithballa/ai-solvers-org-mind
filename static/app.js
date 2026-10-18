@@ -706,7 +706,7 @@ function showShareResult(kind, id, res, redacted) {
   const findings = res.findings || [];
   const list = findings.length ? `<ul class="findings">${findings.map((f) => `<li><span class="cat">${escapeHtml(f.category.replace(/_/g, " "))}</span>
       <code>${escapeHtml(f.preview)}</code> <span class="muted small">${escapeHtml(f.reason || "")}</span></li>`).join("")}</ul>` : "";
-  const note = `<p class="muted small">Checked automatically for personal data and secrets (patterns + a Gemini check), which can miss things. Human review is planned (V3), not built yet.</p>`;
+  const note = `<p class="muted small">Checked automatically for personal data and secrets (patterns + a Gemini check), which can miss things. Human review is planned for the December round, not built yet.</p>`;
   let html;
   if (res.verdict === "clean" && redacted) {
     html = `<h2 class="share-ok">Shared a redacted copy</h2><p>“${escapeHtml(res.doc?.title || "")}” replaces every finding with [REDACTED]. It is indexing now; colleagues will see it once it is Ready. The original stays private.</p>${note}`;

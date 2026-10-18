@@ -242,8 +242,25 @@ under *Shared by colleagues*, read-only, and their agents can retrieve and cite 
   stays private.
 - Every attempt is logged in `share_events` (categories only); *Admin › Guardrails* shows the detectors,
   clean/blocked counts and the last 20 events.
-- `python -m scripts.guardrail_eval` checks the guardrail against real Gemini; `scripts/demo_prep.py` prepares a
-  demo state (dry run by default).
+- `python -m scripts.guardrail_eval` checks the guardrail against real Gemini.
+
+## Demo prep
+
+`python -m scripts.demo_prep` prepares the demo state on a running server. It is a dry run (prints the plan) unless
+`--yes` is passed. Default: reset, distill, upload and wait for `acme-bq-onboarding` as Dana, learn and approve the
+BigQuery skill from her chat `ses_seed_14`, share the doc and the skill (guardrail scan), print the final state.
+All requests carry the admin token, so they don't count against the cost caps.
+
+| Flag | Effect |
+|---|---|
+| `--base-url` | Server to prepare; default `https://orgmind-207900876373.us-central1.run.app` |
+| `--admin-token-file` | File holding the admin token; default `~/.config/orgmind/admin_token` (never printed) |
+| `--no-skill` | No skill is extracted/approved/shared; checks no employee has a skill. `ses_seed_14` stays, so *Learn skills from this chat* can run live |
+| `--no-distill` | No distill; checks there are no playbooks, so *Admin › Knowledge* shows its empty state and *Distill sessions* can run live |
+| `--clear-share-events` | Deletes every `share_events` document (a reset keeps this audit log), so *Admin › Guardrails* starts empty; prints the count. Talks to Firestore directly (`--database`, default `(default)`) |
+
+The shared `acme-bq-onboarding` document is prepared in every mode. For a live recording:
+`python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events`.
 
 ## Seed and reset
 

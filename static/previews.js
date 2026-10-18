@@ -21,7 +21,7 @@
 
   // ---------------- Admin › Agents ----------------
   function agents(state) {
-    const v = "V2";
+    const v = "December round";
     const live = Object.values(state.agents || {});
     const field = (label, control) => `<label class="field">${esc(label)}${planned(v, control)}</label>`;
     return `<div class="panel">${header("Agents", v,
@@ -50,12 +50,12 @@
 
   // ---------------- Admin › Users & Teams ----------------
   function users() {
-    const v = "V2";
+    const v = "December round";
     return `<div class="panel">${header("Users & Teams", v,
       "Manage who uses which agents: sync the directory, group employees into teams and give each team its bundled agents. The demo's Acme employees are seeded data and aren't managed here yet.")}
       <div class="row between"><h3>Users</h3><div class="row">${btn(v, "Sync directory", "btn ghost-light small")}${btn(v, "Invite user", "btn primary small")}</div></div>
       <table class="table"><thead><tr><th>Name</th><th>Email</th><th>Team</th><th>Role</th></tr></thead>
-        <tbody><tr><td colspan="4" class="empty">No users yet. Directory sync is planned for V2.</td></tr></tbody></table>
+        <tbody><tr><td colspan="4" class="empty">No users yet. Directory sync is planned for the December round.</td></tr></tbody></table>
       <div class="row between"><h3>Teams</h3>${btn(v, "Create team", "btn primary small")}</div>
       <table class="table"><thead><tr><th>Team</th><th>Members</th><th>Agents</th></tr></thead>
         <tbody><tr><td colspan="3" class="empty">No teams yet.</td></tr></tbody></table></div>`;
@@ -63,7 +63,7 @@
 
   // ---------------- Admin › MCPs ----------------
   function mcps() {
-    const v = "V2";
+    const v = "December round";
     return `<div class="panel">${header("MCP servers", v,
       "Register MCP servers once at the org level; admins then attach them to agents as tools. No servers are registered in this version.")}
       <table class="table"><thead><tr><th>Server</th><th>Transport</th><th>Used by</th><th>Status</th><th></th></tr></thead><tbody>

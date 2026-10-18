@@ -1,6 +1,8 @@
 """Prepare the demo state on a running OrgMind server. Dry run by default (prints the steps).
 
-    python scripts/demo_prep.py --base-url http://localhost:8080 --admin-token-file ~/.orgmind_admin_token [--yes]
+    python -m scripts.demo_prep [--base-url URL] [--admin-token-file PATH] [--yes]
+
+--base-url defaults to the live service (DEFAULT_URL), --admin-token-file to ~/.config/orgmind/admin_token.
 
 With --yes, idempotently: reset demo, distill, upload "acme-bq-onboarding.txt" as Dana (reused if it already
 exists and isn't failed), wait for Ready, learn skills from Dana's BigQuery chat (ses_seed_14), approve the skill,
@@ -11,6 +13,9 @@ For a live recording, skip the parts you want to show live (the reset already re
     --no-skill      no skill is extracted/approved/shared; checks that no employee has a skill. Dana's closed
                     BigQuery chat (ses_seed_14) stays, so "Learn skills from this chat" can be run live.
     --no-distill    no distill; checks that there are no playbooks (Admin > Knowledge shows its empty state).
+    --clear-share-events  delete every share_events document (the audit log a reset keeps), so Admin > Guardrails
+                    starts empty. share_events has no API, so this talks to Firestore directly (database
+                    --database, default "(default)"; the id is re-checked before every delete, as in clear_traces).
 The shared document acme-bq-onboarding is prepared either way.
 """
 import argparse
@@ -32,11 +37,15 @@ DOC_TEXT = """Acme analytics onboarding: querying BigQuery from your laptop (syn
 4. Questions go to #data-platform.
 """
 OWNER, SESSION = "e_dana", "ses_seed_14"
+DEFAULT_URL = "https://orgmind-207900876373.us-central1.run.app"
+DEFAULT_TOKEN_FILE = "~/.config/orgmind/admin_token"
+BATCH = 400
 
 
-def steps(no_skill=False, no_distill=False):
+def steps(no_skill=False, no_distill=False, clear_share_events=False):
     return [
         "reset the demo (POST /api/demo/reset)",
+        *(["delete every share_events document (Firestore; Guardrails starts empty)"] if clear_share_events else []),
         "skip distill; check there are no playbooks" if no_distill else "distill sessions into playbooks (POST /api/distill)",
         f"as Dana, upload {DOC_TITLE}.txt unless a non-failed copy exists, and wait until it is Ready",
         f"skip the skill; check no employee has a skill ({SESSION} stays for a live 'Learn skills')" if no_skill
@@ -47,18 +56,39 @@ def steps(no_skill=False, no_distill=False):
     ]
 
 
+def clear_share_events(database: str) -> int:
+    """Delete all share_events documents in the named Firestore database. Returns how many were deleted."""
+    import os
+
+    from google.cloud import firestore
+
+    from scripts.clear_traces import guard
+    client = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "arched-jetty-502906-q6"), database=database)
+    guard(client, database)
+    refs = [d.reference for d in client.collection("share_events").select([]).stream()]
+    for start in range(0, len(refs), BATCH):
+        guard(client, database)
+        batch = client.batch()
+        for ref in refs[start:start + BATCH]:
+            batch.delete(ref)
+        batch.commit()
+    return len(refs)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-url", required=True)
-    ap.add_argument("--admin-token-file", required=True)
+    ap.add_argument("--base-url", default=DEFAULT_URL)
+    ap.add_argument("--admin-token-file", default=DEFAULT_TOKEN_FILE)
     ap.add_argument("--yes", action="store_true", help="actually run (default: dry run)")
     ap.add_argument("--index-timeout", type=int, default=900)
     ap.add_argument("--no-skill", action="store_true", help="leave no skills (learn the BigQuery skill live)")
     ap.add_argument("--no-distill", action="store_true", help="leave no playbooks (run Distill live)")
+    ap.add_argument("--clear-share-events", action="store_true", help="delete the share audit log (Guardrails starts empty)")
+    ap.add_argument("--database", default="(default)", help="Firestore database for --clear-share-events")
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
     print(f"target: {base}")
-    for i, s in enumerate(steps(args.no_skill, args.no_distill), 1):
+    for i, s in enumerate(steps(args.no_skill, args.no_distill, args.clear_share_events), 1):
         print(f"  {i}. {s}")
     if not args.yes:
         print("dry run: pass --yes to execute")
@@ -78,6 +108,8 @@ def main():
 
     t0 = time.time()
     print("\n1. reset"); call("POST", "/api/demo/reset")
+    if args.clear_share_events:
+        print(f"   share_events deleted: {clear_share_events(args.database)} (database {args.database!r})")
     if args.no_distill:
         pbs = call("GET", "/api/playbooks")
         print(f"2. distill skipped: {len(pbs)} playbooks")
