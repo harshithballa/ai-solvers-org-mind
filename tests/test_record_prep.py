@@ -14,21 +14,22 @@ def dry_run(monkeypatch, capsys, *flags):
     return capsys.readouterr().out
 
 
-def test_recording_plan(monkeypatch, capsys):
+def test_recording_plan_is_a_full_knowledge_reset(monkeypatch, capsys):
     out = dry_run(monkeypatch, capsys)
     assert f"target: {record_prep.DEFAULT_URL}" in out and "mode: recording" in out
-    assert "purge test- documents" in out and "upload it as Dana" in out and "~/test-contact.txt" in out
-    assert "--yes --clear-share-events --reset-usage --no-skill --no-distill" in out
-    assert "scripts.clear_traces" in out and "dry run: nothing was changed" in out
+    assert "delete EVERY document for all employees" in out and "purge_test_docs --all" in out
+    assert "delete every share_events document" in out and "0 skills, 0 playbooks" in out
+    assert f"upload {record_prep.DOC_TITLE} as Dana (private, not shared)" in out and "test-contact" not in out
+    assert "probe: Liam" in out and "scripts.clear_traces" in out and "dry run: nothing was changed" in out
+
+
+def test_live_docs_stages_no_document(monkeypatch, capsys):
+    out = dry_run(monkeypatch, capsys, "--live-docs")
+    assert "no document staged (--live-docs)" in out and "upload acme" not in out
 
 
 def test_finish_plan_keeps_skill_and_playbooks(monkeypatch, capsys):
     out = dry_run(monkeypatch, capsys, "--finish")
     assert "mode: finish" in out and "assert 2 playbooks, exactly 1 skill for Dana" in out
-    assert "--yes --clear-share-events --reset-usage" in out and "--no-skill" not in out and "--no-distill" not in out
-    assert "test-contact" not in out and "GET the main URL" in out
-
-
-def test_contact_file_has_synthetic_pii_for_the_guardrail():
-    assert record_prep.EMAIL in record_prep.CONTACT_TEXT and record_prep.PHONE in record_prep.CONTACT_TEXT
-    assert record_prep.CONTACT_TITLE.startswith("test-")   # so purge_test_docs removes it
+    assert "scripts.demo_prep --yes --clear-share-events --reset-usage" in out and "--no-skill" not in out
+    assert "--all" not in out and "GET the main URL" in out

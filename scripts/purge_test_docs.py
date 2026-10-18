@@ -3,6 +3,8 @@
     python -m scripts.purge_test_docs          # list "test-" documents that would be deleted
     python -m scripts.purge_test_docs --yes    # delete them (GCS object, index document, rag_docs row)
 
+    python -m scripts.purge_test_docs --all [--yes]    # EVERY document (all employees), same delete path
+
     python -m scripts.purge_test_docs --orphans --database <firestore db>          # list orphans
     python -m scripts.purge_test_docs --orphans --database <firestore db> --yes    # delete them
 
@@ -63,6 +65,7 @@ def find_orphans(rows, objects: dict[str, datetime], index_docs: dict[str, str],
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--yes", action="store_true", help="actually delete (default is a dry run)")
+    ap.add_argument("--all", action="store_true", help="every document, not only test- ones (full knowledge reset)")
     ap.add_argument("--orphans", action="store_true", help="delete GCS objects and index documents with no rag_docs row")
     ap.add_argument("--database", help="--orphans: the Firestore database whose rag_docs rows are kept (read only)")
     ap.add_argument("--min-age", type=int, default=10, help="--orphans: spare objects younger than this many minutes")
@@ -138,21 +141,26 @@ def main():
 
     targets: dict[str, list[RagDoc]] = {}   # gs:// uri -> rows
     for row in get_store().list(RagDoc):
-        if row.title.lower().startswith(PREFIX) and row.gcs_uri.startswith("gs://"):
+        if (args.all or row.title.lower().startswith(PREFIX)) and row.gcs_uri.startswith("gs://"):
             targets.setdefault(row.gcs_uri, []).append(row)
     for blob in bucket.list_blobs(prefix="private/"):
         m = OBJECT_RX.match(blob.name)
-        if m and m.group("name").lower().startswith(PREFIX):
+        if args.all or (m and m.group("name").lower().startswith(PREFIX)):
             targets.setdefault(f"gs://{s.rag_bucket}/{blob.name}", [])
 
     print(f"store={s.store} bucket={s.rag_bucket} datastore={s.rag_datastore}")
-    print(f"{len(targets)} test document(s) {'to delete' if args.yes else 'found (dry run; pass --yes to delete)'}:")
+    rowless = [r for r in get_store().list(RagDoc) if args.all and not r.gcs_uri.startswith("gs://")]
+    print(f"{len(targets)} {'' if args.all else 'test '}document(s) {'to delete' if args.yes else 'found (dry run; pass --yes to delete)'}:")
     for uri, rows in sorted(targets.items()):
         print(f"  {uri}  index_id={content_doc_id(uri)}  rows={[r.id for r in rows]}")
+    for r in rowless:
+        print(f"  row {r.id} ({r.title!r}, {r.status}) has no stored file")
     if not args.yes:
         return 0
 
     failures = 0
+    for r in rowless:
+        get_store().delete(RagDoc, r.id)
     for uri, rows in sorted(targets.items()):
         try:
             docs.delete_document(name=f"{branch}/documents/{content_doc_id(uri)}")

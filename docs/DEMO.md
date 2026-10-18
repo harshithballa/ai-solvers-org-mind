@@ -32,10 +32,13 @@ All requests carry the admin token, so they don't count against the cost caps.
 The shared `acme-bq-onboarding` document is prepared in every mode. For a live recording:
 `python -m scripts.demo_prep --yes --no-skill --no-distill --clear-share-events --reset-usage`.
 
-`python -m scripts.record_prep` does the whole recording setup on the main URL: purges `test-` docs, runs that
-demo_prep command, uploads `~/test-contact.txt` (synthetic email + phone) as Dana and waits for Ready, clears traces
-and checks the state. After recording, `python -m scripts.record_prep --finish` restores the judge-ready default state
-(2 playbooks, Dana's shared skill and doc) and asserts it. `--dry-run` prints the actions only.
+`python -m scripts.record_prep` gives a truly clean recording state on the main URL: a demo reset, then share
+events, today's usage counters and EVERY document for all employees are deleted (row, Cloud Storage object and Vertex
+AI Search document, via `purge_test_docs --all` plus `--orphans`). Only `acme-bq-onboarding` is then uploaded as Dana,
+private and not shared, and the script waits for Ready. It checks 0 skills, 0 playbooks, 0 share events and the 15
+seeded sessions, runs a Liam "Documents only" probe (then resets again to drop that chat), clears traces and prints the
+state. `--live-docs` stages no document. After recording, `python -m scripts.record_prep --finish` restores the
+judge-ready default state (2 playbooks, Dana's shared skill and doc) and asserts it. `--dry-run` prints the actions only.
 
 ## Demo script (3–4 min)
 
