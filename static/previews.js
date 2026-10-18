@@ -124,7 +124,7 @@
           <div class="arch-sub"><h5>Main agent</h5>
             <ul>${item("now", "Dev Agent, HR Agent (Gemini 2.5 Flash on Vertex AI)")}
                 ${item("now", "Playbook retrieval + citations")}
-                ${item("now", "Document upload + RAG on Vertex AI Search (private to the uploader)")}
+                ${item("now", "Document upload + RAG on Vertex AI Search (private unless shared)")}
                 ${item("now", "Daily cost caps (global + per IP) with today's usage vs limits in Admin › Traces")}
                 ${item("dec", "Agent builder (create / edit agents)")}
                 ${item("dec", "ADK on Vertex AI Agent Engine")}</ul></div>
@@ -147,7 +147,7 @@
           <h4>Playbooks / Skills</h4>
           <ul>${item("now", "Playbooks with sources and versions")}
               ${item("now", "Compare: with vs without playbooks")}
-              ${item("now", "Skills learned from one employee's chat: review, approve, apply (private)")}
+              ${item("now", "Skills learned from one employee's chat: review, approve, apply (private unless shared)")}
               ${item("now", "Share docs and skills with the org, behind an automatic PII/secret guardrail (not a guarantee)")}
               ${item("now", "Share audit log: every share attempt with its verdict and finding categories (Admin › Guardrails)")}
               ${item("dec", "Human review of shared items and playbooks before publish")}

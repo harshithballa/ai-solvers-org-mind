@@ -42,7 +42,7 @@ control on them is disabled, and they make no network calls.
 | Users / Teams | Users & Teams admin, directory sync (*Admin › Users & Teams*) | 🟠 December round |
 | Agents | Dev Agent and HR Agent on Gemini 2.5 Flash (Vertex AI) | ✅ Working now |
 | Agents | Playbook retrieval + citations in answers | ✅ Working now |
-| Agents | Document upload + RAG on Vertex AI Search, private to the uploader (*User › My knowledge*) | ✅ Working now |
+| Agents | Document upload + RAG on Vertex AI Search (private unless shared) (*User › My knowledge*) | ✅ Working now |
 | Agents | Daily cost caps (global + per IP) with today's usage vs limits (*Admin › Traces*) | ✅ Working now |
 | Agents | Agent builder: create / edit agents (*Admin › Agents*) | 🟠 December round |
 | Agents | MCP server registry (*Admin › MCPs*) | 🟠 December round |
@@ -56,7 +56,7 @@ control on them is disabled, and they make no network calls.
 | Distillation | PII redaction of sessions before distill | 🟠 December round |
 | Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
 | Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
-| Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private) | ✅ Working now |
+| Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private unless shared) | ✅ Working now |
 | Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (patterns + Gemini, fail closed; not a guarantee) (*Admin › Guardrails*) | ✅ Working now |
 | Playbooks / Skills | Share audit log: every share attempt with its verdict and finding categories (*Admin › Guardrails*) | ✅ Working now |
 | Playbooks / Skills | Human review of shared items and playbooks before publish | 🟠 December round |
@@ -342,8 +342,14 @@ The public deployment bounds worst-case spend (budget: INR 1,000 for the judging
   most of it Vertex AI Search queries, which the 10,000 free queries a month normally cover.
   Not included: Cloud Run, Firestore and Cloud Trace.
 
-## Known limitations
+## Limitations
 
+- **Synthetic data only.** All employees, chats, documents and playbooks are fictional ("Acme Corp").
+- **No sign-in in the prototype.** The "Viewing as" switcher selects a synthetic employee, and the API takes the
+  employee id from the request. A chat can be opened by its id (`GET /api/sessions/{id}`) without an owner check.
+- **The share guardrail is automatic and not a guarantee.** Patterns + Gemini, fail closed; it can miss things.
+- **Planned for the December round:** sign-in, per-org isolation, and human review before a shared item or
+  playbook publishes.
 - **Live Distill can take 20–55s.** Most calls are fast (~1s per summary), but in traces a few `summarize` calls
   take ~20s. That is most likely Vertex AI rate-limit (429) retries with backoff during the parallel summarize
   burst. The UI shows an elapsed timer while it runs. Tuning summarize concurrency and retry/backoff is planned.
@@ -353,7 +359,7 @@ The public deployment bounds worst-case spend (budget: INR 1,000 for the judging
 - **December (final) round:** move agents to **ADK on Vertex AI Agent Engine** with sub-agents, **MCP connections**
   (Jenkins, GitHub, Google Drive, Slack), **upload** of local and external assistant sessions, **skill creation**
   from playbooks, Users & Teams admin with directory sync, an agent builder, an MCP server registry, human review
-  before publish (shared items and playbooks), and PII redaction of sessions before distill. (The automatic share
-  guardrail is already working.)
+  before publish (shared items and playbooks), PII redaction of sessions before distill, and sign-in with per-org
+  isolation. (The automatic share guardrail is already working.)
 - Also planned: tuning summarize concurrency and retry/backoff for faster Distill, per-team access control on
   playbooks, and feedback signals (did the playbook help?) to rank and retire playbooks.
