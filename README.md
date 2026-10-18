@@ -20,7 +20,7 @@ OrgMind is an org-wide layer that learns from what people do and shares it back.
 - **Skills:** an agent learns a reusable procedure from one employee's chat. It stays a private draft until the owner approves it.
 - **Playbooks:** the distiller finds problems that two or more employees resolved separately and compiles them into one cited fix.
 - **Guarded sharing:** documents and skills can be shared org-wide only after an automatic PII and secret check (regex detectors plus Gemini).
-- **Agents:** a Dev agent and an HR agent on Gemini 2.5 Flash. Playbooks, Skills and Documents are per-chat toggles.
+- **Agents:** a Dev agent and an HR agent on Gemini Flash. Playbooks, Skills and Documents are per-chat toggles.
 - **Compare:** the same question side by side, answered without and with org knowledge.
 - **Traces:** every request is traced in Cloud Trace, and every Gemini call shows in the in-app Traces view.
 
