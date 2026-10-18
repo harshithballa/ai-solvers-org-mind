@@ -251,8 +251,14 @@ gcloud run deploy orgmind --source . --region us-central1 \
   --set-secrets ORGMIND_ADMIN_TOKEN=orgmind-admin-token:latest
 ```
 
+Document RAG adds (to an existing service, use `--update-env-vars`, never `--set-env-vars`, which drops the rest):
+`ORGMIND_RAG_PROVIDER=vertex,ORGMIND_RAG_DATASTORE=<data store id>,ORGMIND_RAG_BUCKET=<bucket>,ORGMIND_RAG_LOCATION=global,ORGMIND_RAG_MIN_SCORE=0.25`.
+Leave `ORGMIND_LIMITS` unset (cost caps on). To try a revision before it serves traffic, add
+`--no-traffic --tag <name>` and use the tagged URL.
+
 The runtime service account needs `roles/aiplatform.user`, `roles/datastore.user`, `roles/cloudtrace.agent`,
-`roles/logging.logWriter`, and `roles/secretmanager.secretAccessor` on the `orgmind-admin-token` secret.
+`roles/logging.logWriter`, and `roles/secretmanager.secretAccessor` on the `orgmind-admin-token` secret; for RAG
+also `roles/discoveryengine.editor` on the project and `roles/storage.objectAdmin` on the bucket.
 
 ## Demo script (3–4 min)
 

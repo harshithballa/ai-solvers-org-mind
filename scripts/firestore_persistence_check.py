@@ -90,7 +90,8 @@ def main():
           len(pbs) == 2 and all(len(p.embedding) == 768 and len(p.centroid) == 768 for p in pbs),
           f"dims={[(len(p.embedding), len(p.centroid)) for p in pbs]}")
     summarized = [s for s in store.list(Session, org_id="acme") if s.summary and len(s.summary.embedding) == 768]
-    check("firestore: session summaries + embeddings stored", len(summarized) == 14, f"summarized={len(summarized)}")
+    check("firestore: session summaries + embeddings stored", len(summarized) == r1["sessions_summarized"],
+          f"stored={len(summarized)} distill summarized={r1['sessions_summarized']}")
 
     # ---- process 2: everything still there after restart
     proc = start_app(env)
