@@ -272,10 +272,12 @@ The runtime service account needs `roles/aiplatform.user`, `roles/datastore.user
 | Sharing | Guarded org-wide sharing (regex + Gemini, fail closed) | QA model + human reviewer for shared items, Cloud DLP |
 | Agents | Dev and HR agents, Compare view | Google ADK on Agent Engine, MCP connectors |
 | Operations | Cloud Trace, in-app Traces, daily usage caps | Sign-in and per-org isolation |
+| Models | Gemini 2.5 Flash on Vertex AI for chat, summaries, skills and scans (chosen for the prototype because the demo data is simple and the behaviour is easy to follow) | Newer Gemini models such as 3.8 Flash for harder, real-world cases, adopted after evals |
 
 Honest limits:
 - All data is synthetic (the fictional company "Acme Corp").
 - There is no sign-in. The "Viewing as" switch is a demo convenience, not access control.
 - The automatic PII and secret check is a safety net, not a guarantee.
+- The prototype runs on Gemini 2.5 Flash for demo convenience. The approach is model-agnostic, and newer Gemini models are planned for the next version.
 
 Demo preparation, the recording setup and a walkthrough script are in [docs/DEMO.md](docs/DEMO.md).
