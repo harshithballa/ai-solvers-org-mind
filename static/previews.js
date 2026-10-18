@@ -139,7 +139,7 @@
               ${item("now", "Only resolved sessions give steps; per-person values dropped")}
               ${item("now", "Traces: Cloud Trace + in-app trace view")}
               ${item("v3", "Upload local assistant sessions")}
-              ${item("v3", "PII redaction + review before publish")}</ul>
+              ${item("v3", "PII redaction of sessions before distill")}</ul>
         </div>
         <div class="arch-arrow" aria-hidden="true">→</div>
         <div class="arch-node">
@@ -147,8 +147,8 @@
           <ul>${item("now", "Playbooks with sources and versions")}
               ${item("now", "Compare: with vs without playbooks")}
               ${item("now", "Skills learned from one employee's chat: review, approve, apply (private)")}
-              ${item("now", "Share docs and skills with the org, behind an automatic PII/secret guardrail")}
-              ${item("v2", "Human review of shared items before publish")}
+              ${item("now", "Share docs and skills with the org, behind an automatic PII/secret guardrail (not a guarantee)")}
+              ${item("v3", "Human review of shared items and playbooks before publish")}
               ${item("dec", "Skill creation from playbooks")}</ul>
         </div>
       </div>

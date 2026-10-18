@@ -52,12 +52,12 @@ control on them is disabled, and they make no network calls.
 | Distillation | Only resolved sessions give steps; per-person values dropped | ✅ Working now |
 | Distillation | Traces: Cloud Trace + in-app trace view (*Admin › Traces*) | ✅ Working now |
 | Distillation | Upload local assistant sessions | 🟣 V3 |
-| Distillation | PII redaction of sessions before distill + review before publish | 🟣 V3 |
+| Distillation | PII redaction of sessions before distill | 🟣 V3 |
 | Playbooks / Skills | Playbooks with sources and versions | ✅ Working now |
 | Playbooks / Skills | Compare: with vs without playbooks | ✅ Working now |
 | Playbooks / Skills | Skills learned from one employee's chat: review, approve, apply (private) | ✅ Working now |
-| Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (*Admin › Guardrails*) | ✅ Working now |
-| Playbooks / Skills | Human review of shared items before publish | 🔵 Next version (V2) |
+| Playbooks / Skills | Share docs and skills with the org, behind an automatic PII/secret guardrail (patterns + Gemini, fail closed; not a guarantee) (*Admin › Guardrails*) | ✅ Working now |
+| Playbooks / Skills | Human review of shared items and playbooks before publish | 🟣 V3 |
 | Playbooks / Skills | Skill creation from playbooks | 🟠 December round |
 
 ## Architecture
@@ -188,7 +188,7 @@ Three kinds of knowledge, kept distinct in code and docs:
 |---|---|---|---|
 | **Playbook** (`app/distiller.py`) | Org-wide fix for one recurring problem | Resolved sessions of **2+ employees** hitting the same problem | Everyone (per agent) |
 | **RAG doc** (`app/rag_docs.py`) | Raw uploaded source material, searched at answer time | An employee's upload | Owner, or everyone if `scope=org` |
-| **Skill** (`app/skills.py`) | A reusable procedure **one** employee's agent worked out in **one** conversation | One session | Owner (`scope=org` sharing arrives in Phase 4) |
+| **Skill** (`app/skills.py`) | A reusable procedure **one** employee's agent worked out in **one** conversation | One session | Owner, or everyone once shared (`scope=org`, see Sharing) |
 
 - **Extract** `POST /api/skills/extract {session_id, employee_id}` (session owner only, at least 4 messages): one
   Gemini call returns 0–2 skills (name, description, trigger, steps, parameters as names only, evidence message
@@ -217,7 +217,8 @@ under *Shared by colleagues*, read-only, and their agents can retrieve and cite 
   and does not flag org-wide facts (channels, role handles, tools, datasets, ticket IDs, policy values).
   Publishing needs both layers clean, in the same request. **Fail closed:** if the Gemini check errors, nothing is
   shared ("couldn't verify, try again"). Findings carry a category and a masked preview (e.g. `d***@g***.com`)
-  everywhere: API, UI, logs, spans and `share_events`. **There is no human review yet** (planned).
+  everywhere: API, UI, logs, spans and `share_events`. The scan is automatic and can miss things, so it is a
+  safety net, not a guarantee. **There is no human review yet** (planned for V3).
 - `POST /api/skills/{id}/share|unshare`, `POST /api/rag/docs/{id}/share|unshare` (owner only). PDFs can't be scanned
   yet, so they can't be shared; text over 200 KB is too large to scan. Editing a shared skill makes it private again
   until it is re-scanned. Sharing a document flips our own scope field, so it is instant (no re-import).
@@ -309,8 +310,10 @@ Before each take: open **Admin** (header link), click **Reset demo** (top right,
   only for the runtime service account) instead of a plain env var. Reset is disabled when the token is unset.
 - **Synthetic data only.** No real people or credentials. The distiller already removes per-person values (names,
   cost centers, amounts) from playbooks, enforced in code.
-- **Deferred to V3:** PII redaction before sessions reach the distiller, and a human review step before a
-  playbook publishes (both previewed in *Admin › Guardrails*).
+- **Sharing is guarded automatically** (patterns + Gemini, fail closed; see *Sharing with the org*). It is not a
+  guarantee.
+- **Planned for V3:** human review before a shared item or playbook publishes, and PII redaction of sessions
+  before they reach the distiller.
 - Public demo: chat, compare and distill are unauthenticated and call Gemini; `--max-instances 1` caps spend.
 
 ## Cost caps
@@ -340,7 +343,8 @@ The public deployment bounds worst-case spend (budget: INR 1,000 for the judging
 ## Roadmap
 
 - **Next version (V2):** Users & Teams admin with directory sync, an agent builder, and an MCP server registry.
-- **V3:** guardrails (PII redaction, review before publish) and upload of local assistant sessions.
+- **V3:** human review before publish (shared items and playbooks), PII redaction of sessions before distill, and
+  upload of local assistant sessions. (The automatic share guardrail is already working.)
 - **December (final) round:** move agents to **ADK on Vertex AI Agent Engine** with sub-agents, **MCP connections**
   (Jenkins, GitHub, Google Drive, Slack), **upload** of external sessions (pulled forward from V3), and
   **skill creation** from playbooks.

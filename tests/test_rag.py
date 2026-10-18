@@ -266,3 +266,29 @@ def test_duplicate_titles_get_unique_labels():
     from app.prompts import doc_labels
     hits = [NS(doc=NS(title="Notes")), NS(doc=NS(title="Notes")), NS(doc=NS(title="Other"))]
     assert doc_labels(hits) == ["Notes", "Notes (2)", "Other"]
+
+
+def test_purge_orphans_spares_rows_inflight_and_new_objects():
+    from datetime import datetime, timedelta, timezone
+
+    from app.rag import content_doc_id
+    from scripts.purge_test_docs import find_orphans
+
+    b = "gs://bucket"
+    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    kept = RagDoc(org_id=ORG_ID, owner_employee_id="e_dana", title="kept", mime_type="text/plain", size=1,
+                  gcs_uri=f"{b}/private/e_dana/doc_aa-kept.txt")
+    inflight = RagDoc(org_id=ORG_ID, owner_employee_id="e_dana", title="new", mime_type="text/plain", size=1)
+    objects = {
+        kept.gcs_uri: t,
+        f"{b}/private/e_dana/{inflight.id}-new.txt": t,      # row exists, gcs_uri not written yet
+        f"{b}/private/e_tom/doc_bb-old.txt": t,             # no row: orphan
+        f"{b}/smoke.txt": t,                                 # root object, no row: orphan
+        f"{b}/private/e_tom/doc_cc-fresh.txt": t + timedelta(hours=1),   # too new to judge
+    }
+    index = {content_doc_id(u): u for u in objects} | {"deadbeef" * 4: ""}   # plus an index doc with no object
+    objs, idx, spared = find_orphans([kept, inflight], objects, index, cutoff=t + timedelta(minutes=30))
+    assert objs == [f"{b}/private/e_tom/doc_bb-old.txt", f"{b}/smoke.txt"]
+    assert set(idx) == {content_doc_id(u) for u in objs} | {"deadbeef" * 4}
+    assert set(spared) == {kept.gcs_uri, f"{b}/private/e_dana/{inflight.id}-new.txt", f"{b}/private/e_tom/doc_cc-fresh.txt"}
+    assert find_orphans([], {}, {}, cutoff=t) == ([], [], {})
